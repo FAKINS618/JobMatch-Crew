@@ -6,6 +6,8 @@ from app.schemas.analysis import (
     JobPost,
     JobMarketProfile,
     MarketResumeMatchAnalysis,
+    JobRecommendation,
+    MarketDataQuality,
 )
 from app.schemas.api import (
     JobMatchRequest,
@@ -16,7 +18,14 @@ from app.schemas.api import (
     MarketMatchRequest,
     MarketMatchResponse,
 )
-# 控制 from module import * 时导出的符号列表
+from app.schemas.resume import (
+    ResumeProject,
+    ResumeProfile,
+    ResumeParseRequest,
+    ResumeParseResponse,
+    ResumeVersionCreate,
+    ResumeVersionResponse,
+)
 __all__ = [
     "ActionPlanItem",
     "InterviewQuestion",
@@ -32,4 +41,13 @@ __all__ = [
     "MarketResumeMatchAnalysis",
     "MarketMatchRequest",
     "MarketMatchResponse",
+    "JobRecommendation",
+    "MarketDataQuality",
+    "ResumeProject",
+    "ResumeProfile",
+    "ResumeParseRequest",
+    "ResumeParseResponse",
+    "ResumeVersionCreate",
+    "ResumeVersionResponse",
+
 ]

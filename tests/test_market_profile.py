@@ -1,10 +1,13 @@
 from datetime import date, timedelta
 
-from app.schemas import JobPost
+from app.schemas import JobMarketProfile, JobPost, MarketDataQuality
 from app.services.market_profile_service import (
     build_market_profile,
+    build_market_queries,
     calc_freshness_score,
     detect_job_status,
+    extract_job_dates,
+    has_sufficient_market_data,
 )
 
 
@@ -56,9 +59,13 @@ def test_build_market_profile_filters_expired_jobs(monkeypatch):
         "app.services.market_profile_service.search_jobs",
         fake_search_jobs,
     )
+    monkeypatch.setattr(
+        "app.services.job_verification_service.verify_job_post",
+        lambda post: post,
+    )
 
     profile, posts = build_market_profile(
-        target_role="Python 后端开发",
+        target_role="Python 后端开发实习",
         city="北京",
         max_results=2,
     )
@@ -69,3 +76,89 @@ def test_build_market_profile_filters_expired_jobs(monkeypatch):
     assert "Python" in profile.frequent_skills
     assert "FastAPI" in profile.frequent_skills
     assert len(posts) == 2
+
+
+def test_market_profile_prioritizes_role_skills_over_generic_skills(monkeypatch):
+    def fake_search_jobs(query: str, max_results: int):
+        return [
+            {
+                "title": "AI 应用开发实习",
+                "url": "https://example.com/ai",
+                "content": "需要 Python、Git、HTML、RAG 和 FastAPI",
+                "source": "test",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "app.services.market_profile_service.search_jobs",
+        fake_search_jobs,
+    )
+    monkeypatch.setattr(
+        "app.services.job_verification_service.verify_job_post",
+        lambda post: post,
+    )
+
+    profile, _ = build_market_profile(
+        target_role="AI 应用开发实习",
+        max_results=1,
+    )
+
+    assert "Python" in profile.frequent_skills
+    assert "FastAPI" in profile.frequent_skills
+    assert "RAG" in profile.frequent_skills
+    assert "Git" not in profile.frequent_skills
+    assert "HTML" not in profile.frequent_skills
+
+
+def test_build_market_queries_includes_role_aliases():
+    queries = build_market_queries("AI 应用开发实习", city="北京")
+
+    assert len(queries) == 3
+    assert any("大模型应用开发" in query for query in queries)
+    assert all("北京" in query for query in queries)
+
+
+def test_market_score_requires_valid_post_and_frequent_skills():
+    insufficient_profile = JobMarketProfile(
+        target_role="AI 应用开发实习",
+        valid_count=0,
+        frequent_skills=["Python"],
+    )
+    sufficient_profile = JobMarketProfile(
+        target_role="AI 应用开发实习",
+        valid_count=3,
+        frequent_skills=["Python", "FastAPI", "Docker"],
+        data_quality=MarketDataQuality(
+            level="medium",
+            active_job_count=3,
+            source_domain_count=1,
+        ),
+    )
+
+    assert has_sufficient_market_data(insufficient_profile) is False
+    assert has_sufficient_market_data(sufficient_profile) is True
+
+
+def test_extract_job_dates_from_labeled_dates():
+    published_at, deadline_at = extract_job_dates(
+        "发布时间：2026-07-10，投递截止时间：2026年08月01日"
+    )
+
+    assert published_at == date(2026, 7, 10)
+    assert deadline_at == date(2026, 8, 1)
+
+
+def test_extract_job_dates_from_relative_publish_time():
+    published_at, deadline_at = extract_job_dates("Python 后端实习，3 天前发布")
+
+    assert published_at == date.today() - timedelta(days=3)
+    assert deadline_at is None
+
+
+def test_old_post_is_not_confirmed_active():
+    post = JobPost(title="旧岗位", published_at=date.today() - timedelta(days=100))
+
+    status, reason = detect_job_status(post)
+
+    assert status == "unknown"
+    assert "90" in reason

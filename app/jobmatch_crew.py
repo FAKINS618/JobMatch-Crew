@@ -1,22 +1,9 @@
-from crewai import Agent, Crew, LLM, Process, Task
+from crewai import Agent, Crew, Process, Task
 from app.rag.retriever import format_retrieved_knowledge,  retrieve_knowledge
-from app.config import settings
+from app.llm_factory import build_llm
 from app.prompt_loader import load_prompt
 from app.role_skill_repository import format_role_skill_map_for_prompt
 from app.schemas import JobMatchAnalysis
-
-
-def build_llm() -> LLM:
-    """根据 .env 配置构建 CrewAI 使用的大模型客户端。"""
-    return LLM(
-        model=settings.model,
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
-        temperature=settings.temperature,
-        max_tokens=settings.max_tokens,
-        timeout=120,
-    )
-
 
 def run_jobmatch_crew(resume_text: str, jd_text: str, target_role: str) -> tuple[JobMatchAnalysis | None, str]:
     """运行多 Agent 分析流程。

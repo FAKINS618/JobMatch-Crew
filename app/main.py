@@ -9,6 +9,7 @@ from app.api.job_search import router as job_search_router
 from app.api.reports import router as reports_router
 from app.api.roles import router as roles_router
 from app.api.market_match import router as market_match_router
+from app.api.resumes import router as resumes_router
 from app.database import init_db
 from app.api.analysis_tasks import router as analysis_tasks_router
 
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(job_match_router)
     app.include_router(job_search_router)
     app.include_router(reports_router)
+    app.include_router(resumes_router)
     app.include_router(roles_router)
     app.include_router(market_match_router)
     app.include_router(analysis_tasks_router)

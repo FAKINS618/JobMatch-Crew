@@ -18,7 +18,10 @@ def test_roles_api():
     response = client.get("/api/roles")
 
     assert response.status_code == 200
-    assert "roles" in response.json()
+    roles = response.json()["roles"]
+    assert "AI 应用开发实习" in roles
+    assert "Java 后端开发实习" in roles
+    assert "前端开发实习" in roles
 
 
 def test_reports_api():

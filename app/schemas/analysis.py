@@ -1,5 +1,5 @@
 from datetime import datetime, date
-
+from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -100,10 +100,33 @@ class JobPost(BaseModel):
     deadline_at: date | None = None  # 投递截止时间，用于识别已过期岗位。
     fetched_at: datetime = Field(default_factory=datetime.now)  # 系统实际抓取时间。
 
-    status: str = "unknown"  # active / expired / unknown
+    status: str = "unknown"  # active / likely_active / expired / unknown
     freshness_score: float = Field(default=0.5, ge=0, le=1)  # 时效性分数，越接近 1 越新。
     invalid_reason: str = ""  # 标记为无效或未知时的原因，方便调试和前端展示。
+    relevance_score: float = Field(default=0, ge=0, le=100)
+    verification_status: str = "not_checked"  # verified / likely / unavailable / skipped
+    verification_reason: str = ""
 
+class JobRecommendation(BaseModel):
+    """ 具体岗位分级推荐
+        不只显示市场匹配分,而是输出每个岗位的 A 可立即投递 / B 补强后投递 / C 暂不建议
+     """
+    title: str
+    company: str = ""
+    url: str
+    level: Literal["A", "B", "C"]
+    match_score: int = Field(ge=0, le=100)
+    matched_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
+    reason: str
+    freshness_label: str = "时效待确认"
+
+
+class MarketDataQuality(BaseModel):
+    level: Literal["high", "medium", "low"]
+    active_job_count: int = 0
+    source_domain_count: int = 0
+    message: str = ""
 
 class JobMarketProfile(BaseModel):
     """岗位市场画像。
@@ -115,6 +138,8 @@ class JobMarketProfile(BaseModel):
     target_role: str
     sample_count: int = 0
     valid_count: int = 0
+    likely_active_count: int = 0
+    relevant_count: int = 0
     expired_count: int = 0
     unknown_count: int = 0
     freshness_level: str = "unknown"
@@ -126,12 +151,20 @@ class JobMarketProfile(BaseModel):
     common_responsibilities: list[str] = Field(default_factory=list)
     source_urls: list[str] = Field(default_factory=list)
 
+    source_domain_count: int = 0
+    data_quality: MarketDataQuality | None = None
+
 
 class MarketResumeMatchAnalysis(BaseModel):
-    score: int = Field(ge=0, le=100)
+    # score 保持兼容旧报告，等同于投递适配度；趋势适配度和投递适配度分开表达。
+    score: int | None = Field(default=None, ge=0, le=100)
+    trend_score: int | None = Field(default=None, ge=0, le=100)
+    delivery_score: int | None = Field(default=None, ge=0, le=100)
     summary: str = Field(min_length=20)
     matched_market_skills: list[str] = Field(default_factory=list)
     missing_market_skills: list[str] = Field(default_factory=list)
     recommended_roles: list[str] = Field(default_factory=list)
     resume_improvement_suggestions: list[str] = Field(default_factory=list)
     delivery_strategy: list[str] = Field(default_factory=list)
+
+    job_recommendations: list[JobRecommendation] = Field(default_factory=list)

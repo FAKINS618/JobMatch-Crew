@@ -94,26 +94,31 @@ def generate_job_match_report(payload: JobMatchRequest) -> JobMatchResponse:
                 analysis=analysis,
             )
 
-    # raw-only 兜底：没有任何可解析 JSON 时，仍返回原始文本给用户。
+    # raw-only 兜底：没有任何可解析 JSON 时，不向用户暴露原始模型文本。
+    # raw_result 仍会保存到数据库，方便开发时排查模型输出问题。
     if not parsed:
+        markdown_report = build_degraded_markdown_report()
         report_id = save_report(
             target_role=payload.target_role,
             score=None,
             resume_text=payload.resume_text,
             jd_text=payload.jd_text,
-            markdown_report=raw_result,
+            markdown_report=markdown_report,
             raw_result=raw_result,
             parse_status="raw_only",
         )
         logger.info("Saved raw-only report id=%s", report_id)
-        return JobMatchResponse(markdown_report=raw_result)
+        return JobMatchResponse(markdown_report=markdown_report)
 
-    markdown_report = parsed.get("markdown_report", raw_result)
+    # 旧版 JSON 虽然被提取到，但没有通过 JobMatchAnalysis 校验。这里渲染
+    # 可控的降级报告，而不是把整段 JSON 或模型解释文本当作 Markdown 返给前端。
+    markdown_report = build_degraded_markdown_report(parsed)
+    score = parsed.get("score") if isinstance(parsed.get("score"), int) else None
 
     # 旧版 fallback：兼容以前模型输出的 score/matched_skills/markdown_report 字段。
     report_id = save_report(
         target_role=payload.target_role,
-        score=parsed.get("score"),
+        score=score,
         resume_text=payload.resume_text,
         jd_text=payload.jd_text,
         markdown_report=markdown_report,
@@ -124,7 +129,7 @@ def generate_job_match_report(payload: JobMatchRequest) -> JobMatchResponse:
     logger.info("Saved fallback-json report id=%s", report_id)
 
     return JobMatchResponse(
-        score=parsed.get("score"),
+        score=score,
         matched_skills=normalize_string_list(parsed.get("matched_skills", [])),
         missing_skills=normalize_string_list(parsed.get("missing_skills", [])),
         interview_questions=normalize_string_list(
@@ -132,5 +137,51 @@ def generate_job_match_report(payload: JobMatchRequest) -> JobMatchResponse:
         ),
         action_plan=normalize_string_list(parsed.get("action_plan", [])),
         markdown_report=markdown_report,
-        analysis=analysis,
+        analysis=None,
     )
+
+
+def build_degraded_markdown_report(parsed: dict | None = None) -> str:
+    """把可识别的旧字段渲染成安全的降级报告。
+
+    原始 LLM 文本可能是半截 JSON、模型思考内容或不符合 UI 契约的字段，
+    因而只保留已经识别的摘要、技能和行动项；原文本仍保存于数据库调试字段。
+    """
+    if not parsed:
+        return (
+            "# 求职匹配分析报告\n\n"
+            "> 本次模型输出未能完成结构化解析，系统未展示原始内容。\n\n"
+            "请检查输入后重新生成报告。"
+        )
+
+    lines = [
+        "# 求职匹配分析报告（降级结果）",
+        "",
+        "> 本次模型输出字段不完整，以下内容仅展示系统可安全识别的部分。",
+        "",
+    ]
+
+    score = parsed.get("score")
+    if isinstance(score, int):
+        lines.extend([f"**参考评分：{score}/100**", ""])
+
+    summary = parsed.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        lines.extend(["## 匹配总览", "", summary.strip(), ""])
+
+    sections = [
+        ("已匹配技能", normalize_string_list(parsed.get("matched_skills", []))),
+        ("待补强技能", normalize_string_list(parsed.get("missing_skills", []))),
+        ("面试问题", normalize_string_list(parsed.get("interview_questions", []))),
+        ("行动计划", normalize_string_list(parsed.get("action_plan", []))),
+    ]
+    for title, items in sections:
+        if items:
+            lines.extend([f"## {title}", ""])
+            lines.extend(f"- {item}" for item in items)
+            lines.append("")
+
+    if len(lines) == 4:
+        lines.extend(["系统无法从本次输出中恢复可靠结论，请重新生成报告。", ""])
+
+    return "\n".join(lines)

@@ -1,12 +1,47 @@
 {
   "AI 应用开发实习": {
-    "core_skills": ["Python", "FastAPI", "大模型 API", "Prompt 工程", "CrewAI", "RAG", "Docker"],
-    "project_keywords": ["智能问答", "知识库问答", "多 Agent", "简历分析", "工具调用"],
+    "core_skills": ["Python", "FastAPI", "大模型 API", "Prompt 工程", "结构化输出", "RAG", "CrewAI", "Docker"],
+    "project_keywords": ["智能问答", "知识库问答", "多 Agent", "工具调用", "模型评测"],
     "learning_priority": ["FastAPI 接口开发", "LLM API 调用", "结构化输出", "RAG 知识库", "Docker 部署"]
   },
   "Python 后端开发实习": {
     "core_skills": ["Python", "FastAPI", "MySQL", "Redis", "SQLAlchemy", "RESTful API", "Docker"],
-    "project_keywords": ["用户系统", "权限认证", "后台管理", "日志系统"],
+    "project_keywords": ["用户系统", "权限认证", "后台管理", "日志系统", "缓存设计"],
     "learning_priority": ["FastAPI", "数据库设计", "Redis 缓存", "接口认证", "Docker 部署"]
+  },
+  "Java 后端开发实习": {
+    "core_skills": ["Java", "Spring Boot", "MySQL", "Redis", "MyBatis", "JVM", "RESTful API"],
+    "project_keywords": ["订单系统", "秒杀系统", "权限认证", "消息队列", "分布式服务"],
+    "learning_priority": ["Spring Boot", "MySQL 索引", "Redis", "JVM 基础", "并发编程"]
+  },
+  "前端开发实习": {
+    "core_skills": ["JavaScript", "TypeScript", "Vue3", "React", "HTML", "CSS", "Git"],
+    "project_keywords": ["管理后台", "组件封装", "数据可视化", "响应式布局", "接口联调"],
+    "learning_priority": ["JavaScript 基础", "TypeScript", "Vue3 或 React", "状态管理", "工程化构建"]
+  },
+  "算法工程实习": {
+    "core_skills": ["Python", "PyTorch", "机器学习", "深度学习", "Transformer", "模型训练", "数据处理"],
+    "project_keywords": ["分类模型", "目标检测", "推荐系统", "模型评测", "模型部署"],
+    "learning_priority": ["Python 数据处理", "机器学习基础", "PyTorch", "Transformer", "模型评测"]
+  },
+  "数据开发实习": {
+    "core_skills": ["SQL", "Python", "Spark", "Flink", "Hive", "Kafka", "Linux"],
+    "project_keywords": ["数据仓库", "ETL", "实时计算", "数据治理", "指标平台"],
+    "learning_priority": ["SQL", "数据仓库建模", "Python", "Spark 或 Flink", "Kafka"]
+  },
+  "测试开发实习": {
+    "core_skills": ["Python", "Pytest", "接口测试", "Selenium", "SQL", "Linux", "Git"],
+    "project_keywords": ["自动化测试", "接口回归", "测试平台", "性能测试", "缺陷管理"],
+    "learning_priority": ["测试用例设计", "Pytest", "接口测试", "自动化测试", "性能测试"]
+  },
+  "运维云原生实习": {
+    "core_skills": ["Linux", "Docker", "Kubernetes", "Nginx", "CI/CD", "Git", "监控告警"],
+    "project_keywords": ["容器化部署", "持续集成", "日志监控", "服务治理", "自动化运维"],
+    "learning_priority": ["Linux", "Docker", "Kubernetes", "CI/CD", "监控与日志"]
+  },
+  "嵌入式软件实习": {
+    "core_skills": ["C", "C++", "Linux", "操作系统", "数据结构", "TCP/IP", "Git"],
+    "project_keywords": ["驱动开发", "串口通信", "网络编程", "实时系统", "嵌入式 Linux"],
+    "learning_priority": ["C/C++", "数据结构", "Linux", "操作系统", "网络编程"]
   }
 }
