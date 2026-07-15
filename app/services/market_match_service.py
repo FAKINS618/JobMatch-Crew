@@ -94,6 +94,7 @@ def generate_market_match_report(payload: MarketMatchRequest) -> MarketMatchResp
         parse_status=parse_status,
         parse_error=parse_error,
         model_name=settings.model,
+        resume_version_id=payload.resume_version_id,
     )
     save_job_posts(report_id=report_id, posts=job_posts)
     logger.info("Saved market match report id=%s with %s job posts", report_id, len(job_posts))

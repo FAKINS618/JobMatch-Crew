@@ -21,7 +21,8 @@
 - Python、FastAPI、Uvicorn
 - CrewAI、DeepSeek / OpenAI-compatible API
 - Pydantic：接口校验、LLM 输出结构化校验
-- Streamlit：当前可运行的工作台前端
+- Vue 3 + TypeScript + Vite：求职副驾、简历中心、岗位收件箱和持续工作区前端
+- Streamlit：市场分析与 Prompt 调试的兼容工作台
 - SQLite：报告、岗位样本、异步任务和简历版本存储
 - Tavily Search：岗位搜索入口
 - Pytest、uv
@@ -103,6 +104,7 @@ jobmatch-crew/
 │   ├── llm_factory.py       # 统一 LLM 客户端工厂
 │   └── main.py              # FastAPI 应用入口
 ├── frontend/                # Streamlit 工作台
+├── frontend-web/            # Vue 3 求职工作区
 ├── knowledge/               # 面试知识库资料
 ├── tests/                   # API、Schema、解析与规则测试
 └── docs/images/             # README 运行截图
@@ -128,10 +130,19 @@ uv run uvicorn app.main:app --reload
 uv run streamlit run frontend/streamlit_app.py
 ```
 
+启动 Vue 前端：
+
+```bash
+cd frontend-web
+pnpm install
+pnpm dev
+```
+
 访问地址：
 
 ```text
-工作台：http://localhost:8501
+Vue 工作区：http://localhost:5173
+Streamlit 兼容工作台：http://localhost:8501
 接口文档：http://127.0.0.1:8000/docs
 ```
 
@@ -141,11 +152,11 @@ uv run streamlit run frontend/streamlit_app.py
 uv run pytest
 ```
 
-当前测试覆盖 API 基础可用性、Schema 校验、报告解析、岗位时效规则、岗位搜索去重、岗位 JSON-LD 验证、趋势适配度、RAG 检索、数据库时间转换和简历版本接口。当前共 `37` 条测试通过。
+当前后端测试覆盖 API 基础可用性、Schema 校验、报告解析、岗位时效规则、岗位搜索去重、岗位 JSON-LD 验证、趋势适配度、RAG 检索、数据库时间转换、简历版本和副驾闭环；当前共 `44` 条后端测试通过，Vue API 客户端有独立单测。
 
 ## 当前边界与后续方向
 
 - 岗位搜索当前以 Tavily 为入口，搜索结果可能是招聘聚合页或摘要；投递前仍需打开原链接确认岗位有效性。
 - 当前使用 SQLite 与 FastAPI `BackgroundTasks`，适合单机演示。多用户、高并发或可靠任务重试场景需要升级为 PostgreSQL 与任务队列。
-- 当前前端为 Streamlit 原型，仓库尚未包含 Vue 或 React 工程，因此不应在简历中描述为“已完成 Vue/React 重构”。
-- 下一阶段优先完成：简历版本确认页、具体岗位 A/B/C 分级推荐、投递状态记录，以及技能缺口到知识库学习任务的闭环。
+- Vue 已覆盖副驾、简历版本、岗位收件箱、成长计划和投递管道；Streamlit 保留为兼容和调试入口。
+- 下一阶段优先完成：岗位详情的面试复盘、简历区块差异确认、投递事件时间线，以及账号和隐私隔离。

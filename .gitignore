@@ -11,4 +11,5 @@ dist/
 build/
 *.sqlite3
 *.log
-
+frontend-web/node_modules/
+frontend-web/dist/

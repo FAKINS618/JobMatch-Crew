@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     temperature: float = 0.2
-    max_tokens: int = 3000
+    max_tokens: int = 8000
 
     tavily_api_key: str | None = None
     database_path: Path = BASE_DIR / "jobmatch.db"

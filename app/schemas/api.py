@@ -9,6 +9,8 @@ class JobMatchRequest(BaseModel):
     resume_text: str = Field(..., min_length=80, description="候选人简历文本")
     jd_text: str = Field(..., min_length=80, description="岗位 JD 文本")
     target_role: str = Field(default="计算机相关岗位")
+    resume_version_id: int | None = Field(default=None, gt=0)
+    resume_version_id: int | None = Field(default=None, gt=0)
 
     # 当创建 JobMatchRequest 对象时，要对 resume_text 和 jd_text 这两个字段执行这个校验函数
     @field_validator("resume_text", "jd_text")
@@ -37,6 +39,7 @@ class JobMatchRequest(BaseModel):
 
 
 class JobMatchResponse(BaseModel):
+    report_id: int | None = None
     score: int | None = None
     matched_skills: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(default_factory=list)
@@ -68,6 +71,8 @@ class MarketMatchRequest(BaseModel):
     target_role: str = Field(..., min_length=2, description="目标方向")
     city: str = Field(default="", description="城市")
     max_results: int = Field(default=8, ge=3, le=15)
+    resume_version_id: int | None = Field(default=None, gt=0)
+    resume_version_id: int | None = Field(default=None, gt=0)
 
 
 class MarketMatchResponse(BaseModel):
@@ -75,5 +80,3 @@ class MarketMatchResponse(BaseModel):
     analysis: MarketResumeMatchAnalysis
     markdown_report: str
     report_id: int | None = None
-
-

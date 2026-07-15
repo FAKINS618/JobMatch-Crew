@@ -2,8 +2,13 @@ import streamlit as st
 
 from api_client import fetch_role_detail, fetch_roles
 from views import (
+    render_action_plan,
+    render_copilot_workspace,
+    render_dashboard,
     render_explore_tab,
+    render_job_pipeline,
     render_job_preferences,
+    render_resume_center,
     render_reports_tab,
     render_workbench,
 )
@@ -43,7 +48,7 @@ def main() -> None:
         st.markdown("### 工作区")
         page = st.radio(
             "工作区",
-            ["开始分析", "历史报告", "岗位探索"],
+            ["AI 求职助手", "求职总览", "简历中心", "开始分析", "投递管道", "成长计划", "历史报告", "岗位探索"],
             label_visibility="collapsed",
             key="app_navigation",
         )
@@ -63,6 +68,26 @@ def main() -> None:
 
     st.title("CS JobMate")
     st.caption("计算机专业实习求职分析工作台")
+
+    if page == "AI 求职助手":
+        render_copilot_workspace(roles)
+        return
+
+    if page == "求职总览":
+        render_dashboard()
+        return
+
+    if page == "简历中心":
+        render_resume_center()
+        return
+
+    if page == "投递管道":
+        render_job_pipeline()
+        return
+
+    if page == "成长计划":
+        render_action_plan()
+        return
 
     if page == "历史报告":
         render_reports_tab()

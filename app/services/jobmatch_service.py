@@ -33,7 +33,7 @@ def generate_job_match_report(payload: JobMatchRequest) -> JobMatchResponse:
     if analysis is not None:
         markdown_report = render_markdown_report(analysis)
 
-        save_report(
+        report_id = save_report(
             target_role=payload.target_role,
             score=analysis.score,
             resume_text=payload.resume_text,
@@ -42,9 +42,11 @@ def generate_job_match_report(payload: JobMatchRequest) -> JobMatchResponse:
             raw_result=raw_result,
             parsed_result=analysis.model_dump_json(),
             parse_status="pydantic_success",
+            resume_version_id=payload.resume_version_id,
         )
 
         return JobMatchResponse(
+            report_id=report_id,
             score=analysis.score,
             matched_skills=analysis.matched_skills,
             missing_skills=analysis.missing_skills,
@@ -76,10 +78,12 @@ def generate_job_match_report(payload: JobMatchRequest) -> JobMatchResponse:
                 raw_result=raw_result,
                 parsed_result=analysis.model_dump_json(),
                 parse_status="fallback_pydantic_success",
+                resume_version_id=payload.resume_version_id,
             )
             logger.info("Saved fallback-pydantic report id=%s", report_id)
 
             return JobMatchResponse(
+                report_id=report_id,
                 score=analysis.score,
                 matched_skills=analysis.matched_skills,
                 missing_skills=analysis.missing_skills,
@@ -106,9 +110,10 @@ def generate_job_match_report(payload: JobMatchRequest) -> JobMatchResponse:
             markdown_report=markdown_report,
             raw_result=raw_result,
             parse_status="raw_only",
+            resume_version_id=payload.resume_version_id,
         )
         logger.info("Saved raw-only report id=%s", report_id)
-        return JobMatchResponse(markdown_report=markdown_report)
+        return JobMatchResponse(report_id=report_id, markdown_report=markdown_report)
 
     # 旧版 JSON 虽然被提取到，但没有通过 JobMatchAnalysis 校验。这里渲染
     # 可控的降级报告，而不是把整段 JSON 或模型解释文本当作 Markdown 返给前端。
@@ -125,10 +130,12 @@ def generate_job_match_report(payload: JobMatchRequest) -> JobMatchResponse:
         raw_result=raw_result,
         parsed_result=json.dumps(parsed, ensure_ascii=False),
         parse_status="fallback_json",
+        resume_version_id=payload.resume_version_id,
     )
     logger.info("Saved fallback-json report id=%s", report_id)
 
     return JobMatchResponse(
+        report_id=report_id,
         score=score,
         matched_skills=normalize_string_list(parsed.get("matched_skills", [])),
         missing_skills=normalize_string_list(parsed.get("missing_skills", [])),

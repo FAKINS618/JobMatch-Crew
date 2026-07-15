@@ -8,12 +8,23 @@ import json
 from typing import Any
 import streamlit as st
 from api_client import (
+    create_action_evidence,
+    create_action_items_from_report,
     create_job_match_report,
+    create_job_target,
     create_market_match_task,
+    get_dashboard_summary,
     get_report_detail,
     get_task_detail,
+    list_action_items,
+    list_job_targets,
     list_reports,
+    list_resume_versions,
+    parse_resume,
+    save_resume_version,
     search_jobs,
+    update_action_item,
+    update_job_target,
 )
 from ui_helpers import format_tags, get_role_core_skills
 
@@ -25,6 +36,32 @@ MARKET_TASK_ID_KEY = "market_task_id"
 MARKET_TASK_DETAIL_KEY = "market_task_detail"
 HISTORY_DETAIL_KEY = "history_report_detail"
 CUSTOM_ROLE_OPTION = "其他计算机岗位（自定义）"
+COPILOT_MESSAGES_KEY = "copilot_messages"
+COPILOT_RESUME_KEY = "copilot_resume_text"
+COPILOT_JD_KEY = "copilot_jd_text"
+COPILOT_RESULT_KEY = "copilot_result"
+
+
+def _classify_copilot_message(text: str) -> str:
+    """用可解释规则区分用户粘贴的简历、JD 和求职意向。"""
+    normalized = text.lower()
+    jd_markers = ("岗位职责", "任职要求", "岗位要求", "职位描述", "招聘", "jd", "job description")
+    resume_markers = ("项目经历", "教育经历", "工作经历", "实习经历", "专业技能", "github", "gpa")
+    if any(marker in normalized for marker in jd_markers):
+        return "jd"
+    if any(marker in normalized for marker in resume_markers) or len(text) >= 300:
+        return "resume"
+    return "intent"
+
+
+def _infer_preferences(text: str, roles: list[str]) -> tuple[str | None, str | None]:
+    """从自然语言输入中提取已知岗位方向和常见城市，不做不确定推断。"""
+    role = next((item for item in roles if item.lower() in text.lower()), None)
+    city = next(
+        (item for item in ("北京", "上海", "深圳", "杭州", "广州", "成都", "南京", "武汉", "不限") if item in text),
+        None,
+    )
+    return role, city
 
 
 def _init_workbench_state() -> None:
@@ -65,6 +102,160 @@ def render_job_preferences(roles: list[str]) -> tuple[str, str]:
     # 侧栏只读取这两个状态值，避免侧栏与主页面拥有两套会互相覆盖的输入。
     st.session_state["target_role"] = target_role or "计算机相关岗位"
     return st.session_state["target_role"], city
+
+
+def render_copilot_workspace(roles: list[str]) -> None:
+    """以一条自然语言输入承接简历、JD 和求职意向，再调用既有智能体。"""
+    st.session_state.setdefault(COPILOT_MESSAGES_KEY, [])
+    st.session_state.setdefault(COPILOT_RESUME_KEY, "")
+    st.session_state.setdefault(COPILOT_JD_KEY, "")
+    st.session_state.setdefault(COPILOT_RESULT_KEY, None)
+
+    st.subheader("AI 求职助手")
+    st.caption("直接发简历、岗位 JD 或求职目标；助手会识别上下文并组织下一步。")
+
+    resume_text = st.session_state[COPILOT_RESUME_KEY]
+    jd_text = st.session_state[COPILOT_JD_KEY]
+    resume_col, jd_col, intent_col = st.columns(3)
+    resume_col.metric("简历上下文", "已识别" if resume_text else "等待输入")
+    jd_col.metric("岗位上下文", "已识别" if jd_text else "等待输入")
+    intent_col.metric("当前方向", st.session_state.get("target_role") or "待确认")
+
+    with st.expander("补充文件或清空本次对话", expanded=False):
+        uploaded_file = st.file_uploader(
+            "上传简历（txt / md）",
+            type=["txt", "md"],
+            key="copilot_resume_file",
+        )
+        if uploaded_file is not None:
+            upload_token = f"{uploaded_file.name}:{uploaded_file.size}"
+            if st.session_state.get("copilot_upload_token") != upload_token:
+                st.session_state[COPILOT_RESUME_KEY] = uploaded_file.getvalue().decode(
+                    "utf-8", errors="ignore"
+                )
+                st.session_state["copilot_upload_token"] = upload_token
+                st.session_state[COPILOT_MESSAGES_KEY].append(
+                    {"role": "assistant", "content": "我已读取简历文件。现在可以继续粘贴目标 JD，或让我做市场岗位分析。"}
+                )
+                st.rerun()
+        if st.button("开始新的对话", key="clear_copilot_context"):
+            for key in (
+                COPILOT_MESSAGES_KEY,
+                COPILOT_RESUME_KEY,
+                COPILOT_JD_KEY,
+                COPILOT_RESULT_KEY,
+                "copilot_upload_token",
+            ):
+                st.session_state.pop(key, None)
+            st.rerun()
+
+    messages = st.session_state[COPILOT_MESSAGES_KEY]
+    if not messages:
+        with st.chat_message("assistant"):
+            st.write("把简历、招聘 JD 或目标意向直接发给我。我会先识别内容，再启动匹配、市场搜索或下一步行动。")
+    for message in messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+
+    user_message = st.chat_input("例如：这是我的简历… / 这是岗位 JD… / 我想在北京找 Python 后端实习")
+    if user_message:
+        text = user_message.strip()
+        if not text:
+            st.stop()
+        messages.append({"role": "user", "content": text})
+        message_type = _classify_copilot_message(text)
+        role, city = _infer_preferences(text, roles)
+        if role:
+            st.session_state["target_role"] = role
+            st.session_state["selected_role_option"] = role
+        if city:
+            st.session_state["target_city"] = "" if city == "不限" else city
+
+        if message_type == "resume":
+            st.session_state[COPILOT_RESUME_KEY] = text
+            reply = "我已把这段内容识别为简历。继续发目标岗位 JD，我会做逐条证据匹配；也可以直接说“帮我找市场岗位”。"
+        elif message_type == "jd":
+            st.session_state[COPILOT_JD_KEY] = text
+            reply = "我已把这段内容识别为岗位 JD。若简历已就绪，可以立即启动多智能体匹配。"
+        else:
+            detected = []
+            if role:
+                detected.append(f"目标方向已更新为“{role}”")
+            if city:
+                detected.append(f"目标城市已更新为“{city}”")
+            reply = "；".join(detected) if detected else "我记录了你的求职意向。现在发送简历或 JD，我会继续补齐分析上下文。"
+        messages.append({"role": "assistant", "content": reply})
+        st.rerun()
+
+    resume_text = st.session_state[COPILOT_RESUME_KEY]
+    jd_text = st.session_state[COPILOT_JD_KEY]
+    target_role = st.session_state.get("target_role") or roles[0]
+    city = st.session_state.get("target_city", "")
+    action_col, secondary_col = st.columns(2)
+    with action_col:
+        can_match = len(resume_text.strip()) >= 80 and len(jd_text.strip()) >= 80
+        if st.button(
+            "启动 JD 智能体匹配",
+            type="primary",
+            use_container_width=True,
+            disabled=not can_match,
+            key="copilot_start_job_match",
+        ):
+            try:
+                with st.spinner("智能体正在提取证据、评估匹配度并生成行动建议..."):
+                    result = create_job_match_report(
+                        {
+                            "resume_text": resume_text,
+                            "jd_text": jd_text,
+                            "target_role": target_role,
+                        }
+                    )
+            except Exception as exc:
+                st.error(f"智能体匹配失败：{exc}")
+            else:
+                st.session_state[COPILOT_RESULT_KEY] = {"kind": "job", "data": result}
+                messages.append(
+                    {"role": "assistant", "content": "匹配报告已生成。我已把技能缺口、简历修改和下一步行动整理在下方。"}
+                )
+                st.rerun()
+    with secondary_col:
+        can_search = len(resume_text.strip()) >= 80
+        if st.button(
+            "让智能体探索市场岗位",
+            use_container_width=True,
+            disabled=not can_search,
+            key="copilot_start_market_match",
+        ):
+            try:
+                task = create_market_match_task(
+                    {
+                        "resume_text": resume_text,
+                        "target_role": target_role,
+                        "city": city,
+                        "max_results": 8,
+                    }
+                )
+            except Exception as exc:
+                st.error(f"市场分析任务创建失败：{exc}")
+            else:
+                st.session_state[MARKET_TASK_ID_KEY] = task["task_id"]
+                st.session_state[MARKET_TASK_DETAIL_KEY] = task
+                messages.append(
+                    {"role": "assistant", "content": "我已开始检索和验证岗位。完成后会把可投岗位与补强优先级带回这里。"}
+                )
+                st.rerun()
+
+    _render_market_task_status()
+    market_result = st.session_state.get(WORKBENCH_RESULT_KEY)
+    if market_result and market_result.get("kind") == "market":
+        _render_market_match_result(
+            market_result.get("data") or {}, download_key="copilot_market_match_download"
+        )
+    result = st.session_state.get(COPILOT_RESULT_KEY)
+    if result and result.get("kind") == "job":
+        _render_job_match_result(
+            result.get("data") or {}, download_key="copilot_job_match_download"
+        )
 
 
 def _as_string_list(value: Any) -> list[str]:
@@ -160,6 +351,7 @@ def _render_job_match_result(data: dict[str, Any], download_key: str) -> None:
         analysis.get("missing_skills") or data.get("missing_skills")
     )
     score = analysis.get("score", data.get("score"))
+    report_id = data.get("report_id")
 
     st.subheader("本次简历匹配结果")
     metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
@@ -242,6 +434,25 @@ def _render_job_match_result(data: dict[str, Any], download_key: str) -> None:
                 )
         else:
             _show_list(_as_string_list(data.get("action_plan")))
+        if report_id and missing_skills:
+            selected_skills = st.multiselect(
+                "选择要加入成长计划的技能",
+                missing_skills,
+                key=f"job_gap_skills_{report_id}_{download_key}",
+            )
+            if st.button(
+                "加入成长计划",
+                key=f"create_job_actions_{report_id}_{download_key}",
+                disabled=not selected_skills,
+            ):
+                try:
+                    created_items = create_action_items_from_report(
+                        int(report_id), {"skills": selected_skills}
+                    )
+                except Exception as exc:
+                    st.error(f"创建成长任务失败：{exc}")
+                else:
+                    st.success(f"已加入 {len(created_items)} 项成长任务。")
 
     with report_tab:
         markdown_report = str(data.get("markdown_report") or "")
@@ -315,6 +526,7 @@ def _render_market_match_result(data: dict[str, Any], download_key: str) -> None
     profile = data.get("market_profile") or {}
     analysis = data.get("analysis") or {}
     job_posts = data.get("job_posts") or []
+    report_id = data.get("report_id")
     data_sufficient = _is_market_data_sufficient(profile)
     trend_sufficient = _is_trend_data_sufficient(profile)
 
@@ -379,6 +591,23 @@ def _render_market_match_result(data: dict[str, Any], download_key: str) -> None
                 st.markdown(f"待补强：{format_tags(item.get('missing_skills', []))}")
                 if item.get("url"):
                     st.markdown(f"[查看岗位原链接]({item['url']})")
+                if report_id and item.get("url"):
+                    if st.button(
+                        "加入投递管道",
+                        key=f"create_target_{report_id}_{item.get('url')}",
+                    ):
+                        try:
+                            create_job_target(
+                                {
+                                    "report_id": int(report_id),
+                                    "url": item["url"],
+                                    "priority": level,
+                                }
+                            )
+                        except Exception as exc:
+                            st.error(f"加入投递管道失败：{exc}")
+                        else:
+                            st.success("岗位已加入投递管道。")
 
     with overview_tab:
         if analysis.get("summary"):
@@ -406,6 +635,26 @@ def _render_market_match_result(data: dict[str, Any], download_key: str) -> None
             if data_sufficient:
                 st.markdown("#### 简历优化建议")
                 _show_list(_as_string_list(analysis.get("resume_improvement_suggestions")))
+            missing_skills = _as_string_list(analysis.get("missing_market_skills"))
+            if report_id and missing_skills:
+                selected_skills = st.multiselect(
+                    "选择要加入成长计划的技能",
+                    missing_skills,
+                    key=f"market_gap_skills_{report_id}_{download_key}",
+                )
+                if st.button(
+                    "加入成长计划",
+                    key=f"create_actions_{report_id}_{download_key}",
+                    disabled=not selected_skills,
+                ):
+                    try:
+                        created_items = create_action_items_from_report(
+                            int(report_id), {"skills": selected_skills}
+                        )
+                    except Exception as exc:
+                        st.error(f"创建成长任务失败：{exc}")
+                    else:
+                        st.success(f"已加入 {len(created_items)} 项成长任务。")
 
     with strategy_tab:
         if not data_sufficient:
@@ -618,6 +867,30 @@ def render_workbench(
         key="workbench_analysis_mode",
     )
 
+    try:
+        resume_versions = list_resume_versions()
+    except Exception as exc:
+        resume_versions = []
+        st.warning(f"读取已保存简历版本失败：{exc}")
+
+    version_options: list[dict[str, Any] | None] = [None, *resume_versions]
+    selected_version = st.selectbox(
+        "用于本次分析的简历版本",
+        version_options,
+        format_func=lambda item: (
+            "手动输入简历"
+            if item is None
+            else f"{item.get('version_name')} | {item.get('target_role') or '未设置方向'}"
+        ),
+        key="workbench_resume_version_choice",
+    )
+    selected_version_id = selected_version.get("id") if selected_version else None
+    if selected_version_id and st.session_state.get("loaded_resume_version_id") != selected_version_id:
+        st.session_state["workbench_resume_text"] = selected_version.get("raw_text", "")
+        st.session_state["loaded_resume_version_id"] = selected_version_id
+    elif selected_version is None:
+        st.session_state["loaded_resume_version_id"] = None
+
     resume_text = st.text_area(
         "简历内容",
         height=300,
@@ -683,11 +956,17 @@ def render_workbench(
         try:
             with st.spinner("正在生成结构化匹配报告..."):
                 result = create_job_match_report(
-                    {
-                        "resume_text": resume_text,
-                        "jd_text": jd_text,
-                        "target_role": target_role,
-                    }
+                {
+                    "resume_text": resume_text,
+                    "jd_text": jd_text,
+                    "target_role": target_role,
+                    "resume_version_id": (
+                        selected_version_id
+                        if selected_version
+                        and resume_text == selected_version.get("raw_text", "")
+                        else None
+                    ),
+                }
                 )
         except Exception as exc:
             st.error(f"报告生成失败：{exc}")
@@ -704,6 +983,12 @@ def render_workbench(
                 "target_role": target_role,
                 "city": city,
                 "max_results": max_results,
+                "resume_version_id": (
+                    selected_version_id
+                    if selected_version
+                    and resume_text == selected_version.get("raw_text", "")
+                    else None
+                ),
             }
         )
     except Exception as exc:
@@ -732,6 +1017,7 @@ def _render_saved_report_detail(report_detail: dict[str, Any]) -> None:
     if analysis:
         _render_job_match_result(
             {
+                "report_id": report_detail.get("id"),
                 "score": report_detail.get("score"),
                 "analysis": analysis,
                 "markdown_report": report_detail.get("markdown_report", ""),
@@ -854,3 +1140,238 @@ def render_explore_tab(
         _render_search_tool(default_keyword=target_role, city=city)
     with role_map_tab:
         _render_role_map(role_info)
+
+
+def render_dashboard() -> None:
+    """展示只由用户真实投递与任务操作构成的闭环总览。"""
+    st.subheader("求职总览")
+    try:
+        summary = get_dashboard_summary()
+    except Exception as exc:
+        st.error(f"读取求职总览失败：{exc}")
+        return
+
+    job_col1, job_col2, job_col3, job_col4 = st.columns(4)
+    job_col1.metric("待投岗位", summary.get("saved_job_count", 0))
+    job_col2.metric("已投递", summary.get("applied_job_count", 0))
+    job_col3.metric("面试中", summary.get("interview_job_count", 0))
+    job_col4.metric("Offer", summary.get("offer_job_count", 0))
+
+    action_col1, action_col2, action_col3, action_col4 = st.columns(4)
+    action_col1.metric("待办任务", summary.get("todo_action_count", 0))
+    action_col2.metric("进行中", summary.get("in_progress_action_count", 0))
+    action_col3.metric("已完成", summary.get("completed_action_count", 0))
+    action_col4.metric("成果证据", summary.get("evidence_count", 0))
+
+
+def render_job_pipeline() -> None:
+    """维护收藏到 Offer 的投递状态，并由后端记录状态事件。"""
+    st.subheader("投递管道")
+    try:
+        targets = list_job_targets()
+    except Exception as exc:
+        st.error(f"读取投递管道失败：{exc}")
+        return
+
+    if not targets:
+        st.info("暂无投递目标。请在市场分析的岗位推荐中加入目标岗位。")
+        return
+
+    status_options = [
+        "saved",
+        "applied",
+        "written_test",
+        "interview",
+        "offer",
+        "rejected",
+        "withdrawn",
+    ]
+    status_labels = {
+        "saved": "待投递",
+        "applied": "已投递",
+        "written_test": "笔试",
+        "interview": "面试",
+        "offer": "Offer",
+        "rejected": "未通过",
+        "withdrawn": "已撤回",
+    }
+    for target in targets:
+        title = target.get("title") or "未命名岗位"
+        company = target.get("company") or "未知公司"
+        with st.expander(
+            f"{target.get('priority', 'C')} 类 | {title} | {company} | "
+            f"{status_labels.get(target.get('status'), target.get('status'))}",
+            expanded=target.get("status") in {"saved", "applied"},
+        ):
+            st.caption(
+                f"匹配分：{target.get('match_score', '未评分')} | "
+                f"创建时间：{target.get('created_at_local') or target.get('created_at')}"
+            )
+            if target.get("url"):
+                st.markdown(f"[查看岗位原链接]({target['url']})")
+            if target.get("note"):
+                st.write(target["note"])
+            with st.form(f"job_target_update_{target['id']}"):
+                current_status = target.get("status", "saved")
+                next_status = st.selectbox(
+                    "投递状态",
+                    status_options,
+                    index=status_options.index(current_status),
+                    format_func=lambda value: status_labels[value],
+                )
+                note = st.text_area(
+                    "备注",
+                    value=target.get("note", ""),
+                    key=f"target_note_{target['id']}",
+                    height=80,
+                )
+                submitted = st.form_submit_button("保存状态", type="primary")
+            if submitted:
+                try:
+                    update_job_target(
+                        int(target["id"]), {"status": next_status, "note": note}
+                    )
+                except Exception as exc:
+                    st.error(f"状态更新失败：{exc}")
+                else:
+                    st.rerun()
+
+
+def render_action_plan() -> None:
+    """管理技能补强任务，完成前必须提交成果证据。"""
+    st.subheader("成长计划")
+    try:
+        items = list_action_items()
+    except Exception as exc:
+        st.error(f"读取成长计划失败：{exc}")
+        return
+
+    if not items:
+        st.info("暂无成长任务。请在分析报告的技能差距中创建任务。")
+        return
+
+    status_options = ["todo", "in_progress", "completed", "cancelled"]
+    status_labels = {
+        "todo": "待开始",
+        "in_progress": "进行中",
+        "completed": "已完成",
+        "cancelled": "已取消",
+    }
+    for item in items:
+        with st.expander(
+            f"{item.get('skill') or '通用'} | {item.get('title')} | "
+            f"{status_labels.get(item.get('status'), item.get('status'))}",
+            expanded=item.get("status") in {"todo", "in_progress"},
+        ):
+            st.caption(
+                f"优先级：{item.get('priority')} | 已提交证据：{item.get('evidence_count', 0)}"
+            )
+            st.write(f"预期产出：{item.get('expected_output')}")
+            with st.form(f"action_evidence_{item['id']}"):
+                evidence_url = st.text_input("成果链接", key=f"evidence_url_{item['id']}")
+                evidence_note = st.text_area(
+                    "成果说明", key=f"evidence_note_{item['id']}", height=80
+                )
+                evidence_submitted = st.form_submit_button("提交成果证据")
+            if evidence_submitted:
+                evidence_type = "link" if evidence_url.strip() else "note"
+                try:
+                    create_action_evidence(
+                        int(item["id"]),
+                        {
+                            "evidence_type": evidence_type,
+                            "url": evidence_url.strip() or None,
+                            "content": evidence_note.strip(),
+                        },
+                    )
+                except Exception as exc:
+                    st.error(f"提交成果证据失败：{exc}")
+                else:
+                    st.rerun()
+
+            with st.form(f"action_update_{item['id']}"):
+                current_status = item.get("status", "todo")
+                next_status = st.selectbox(
+                    "任务状态",
+                    status_options,
+                    index=status_options.index(current_status),
+                    format_func=lambda value: status_labels[value],
+                )
+                updated = st.form_submit_button("更新任务状态", type="primary")
+            if updated:
+                try:
+                    update_action_item(int(item["id"]), {"status": next_status})
+                except Exception as exc:
+                    st.error(f"任务更新失败：{exc}")
+                else:
+                    st.rerun()
+
+
+def render_resume_center() -> None:
+    """提供“解析-确认-保存”的简历版本流程，保存动作始终由用户触发。"""
+    st.subheader("简历中心")
+    st.caption("先确认结构化信息，再保存为可追溯的简历版本。")
+    raw_text = st.text_area(
+        "简历内容",
+        key="resume_center_raw_text",
+        height=260,
+        placeholder="粘贴不少于 80 字的简历内容...",
+    )
+    if st.button("解析简历", type="primary", key="parse_resume_profile"):
+        if len(raw_text.strip()) < 80:
+            st.warning("请提供不少于 80 字的简历内容。")
+        else:
+            try:
+                with st.spinner("正在提取简历结构化信息..."):
+                    parsed = parse_resume(raw_text.strip())
+            except Exception as exc:
+                st.error(f"简历解析失败：{exc}")
+            else:
+                st.session_state["resume_center_profile_json"] = json.dumps(
+                    parsed.get("profile", {}), ensure_ascii=False, indent=2
+                )
+
+    profile_json = st.text_area(
+        "确认后的结构化档案",
+        value=st.session_state.get("resume_center_profile_json", "{}"),
+        height=260,
+        key="resume_center_profile_json",
+    )
+    version_col, role_col = st.columns(2)
+    with version_col:
+        version_name = st.text_input("版本名称", placeholder="例如：Python 后端实习 v1")
+    with role_col:
+        target_role = st.text_input("适用岗位方向", key="resume_center_target_role")
+    if st.button("确认并保存简历版本", key="save_resume_version", type="primary"):
+        try:
+            profile = json.loads(profile_json)
+            if not isinstance(profile, dict):
+                raise ValueError("结构化档案必须是 JSON 对象")
+            saved = save_resume_version(
+                {
+                    "version_name": version_name.strip(),
+                    "target_role": target_role.strip(),
+                    "raw_text": raw_text.strip(),
+                    "profile": profile,
+                }
+            )
+        except (ValueError, json.JSONDecodeError) as exc:
+            st.error(f"简历版本校验失败：{exc}")
+        except Exception as exc:
+            st.error(f"保存简历版本失败：{exc}")
+        else:
+            st.success(f"已保存简历版本：{saved.get('version_name')}")
+
+    try:
+        versions = list_resume_versions()
+    except Exception as exc:
+        st.error(f"读取简历版本失败：{exc}")
+        return
+    if versions:
+        st.markdown("#### 已保存版本")
+        for version in versions:
+            st.markdown(
+                f"- **{version.get('version_name')}** | "
+                f"{version.get('target_role') or '未设置方向'} | "
+                f"{version.get('created_at') or ''}"
+            )

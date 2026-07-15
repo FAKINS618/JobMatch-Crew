@@ -8,10 +8,13 @@ from app.api.job_match import router as job_match_router
 from app.api.job_search import router as job_search_router
 from app.api.reports import router as reports_router
 from app.api.roles import router as roles_router
-from app.api.market_match import router as market_match_router
 from app.api.resumes import router as resumes_router
 from app.database import init_db
 from app.api.analysis_tasks import router as analysis_tasks_router
+from app.api.action_items import router as action_items_router
+from app.api.dashboard import router as dashboard_router
+from app.api.job_targets import router as job_targets_router
+from app.api.copilot import router as copilot_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,8 +44,11 @@ def create_app() -> FastAPI:
     app.include_router(reports_router)
     app.include_router(resumes_router)
     app.include_router(roles_router)
-    app.include_router(market_match_router)
     app.include_router(analysis_tasks_router)
+    app.include_router(action_items_router)
+    app.include_router(dashboard_router)
+    app.include_router(job_targets_router)
+    app.include_router(copilot_router)
     return app
 
 
