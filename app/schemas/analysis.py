@@ -35,6 +35,18 @@ class ActionPlanItem(BaseModel):
     output: str = ""
 
 
+class RequirementMatch(BaseModel):
+    """一条岗位要求与简历证据之间的可解释匹配结果。"""
+
+    requirement: str
+    category: Literal["must", "preferred", "context"] = "must"
+    status: Literal["supported", "partial", "missing_evidence"] = "missing_evidence"
+    keyword_evidence: list[str] = Field(default_factory=list)
+    semantic_evidence: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0, ge=0, le=1)
+    suggestion: str = ""
+
+
 class JobMatchAnalysis(BaseModel):
     """最终报告的稳定数据结构。
 
@@ -45,6 +57,7 @@ class JobMatchAnalysis(BaseModel):
     matched_skills: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(default_factory=list)
     score_dimensions: list[ScoreDimension] = Field(default_factory=list)
+    requirement_matches: list[RequirementMatch] = Field(default_factory=list)
     resume_bullets: list[str] = Field(default_factory=list)
     interview_questions: list[InterviewQuestion] = Field(default_factory=list)
     action_plan: list[ActionPlanItem] = Field(default_factory=list)

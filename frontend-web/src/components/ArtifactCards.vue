@@ -32,6 +32,18 @@ function stringList(payload: Record<string, unknown>, key: string): string[] {
     ? payload[key].filter((item): item is string => typeof item === "string")
     : [];
 }
+
+function statusLabel(value: string): string {
+  if (value === "supported") return "已有直接证据";
+  if (value === "partial") return "语义相关，证据待补强";
+  return "缺少简历证据";
+}
+
+function confidenceLabel(payload: Record<string, unknown>): string {
+  return typeof payload.confidence === "number"
+    ? `可信度 ${Math.round(payload.confidence * 100)}%`
+    : "可信度待确认";
+}
 </script>
 
 <template>
@@ -72,11 +84,15 @@ function stringList(payload: Record<string, unknown>, key: string): string[] {
     <div v-for="item in array(evidenceMap.payload, 'items')" :key="text(item, 'requirement')" class="evidence-item">
       <div>
         <strong>{{ text(item, "requirement") }}</strong>
-        <p>{{ text(item, "suggestion") }}</p>
+        <p>{{ text(item, "category") === "preferred" ? "加分要求" : "核心要求" }} · {{ text(item, "suggestion") }}</p>
       </div>
       <div class="evidence-detail">
-        <span :class="text(item, 'status')">{{ text(item, "status") === "supported" ? "已有证据" : "证据不足" }}</span>
-        <p v-for="evidence in stringList(item, 'evidence')" :key="evidence">{{ evidence }}</p>
+        <span :class="text(item, 'status')">{{ statusLabel(text(item, "status")) }} · {{ confidenceLabel(item) }}</span>
+        <p v-for="evidence in stringList(item, 'keyword_evidence')" :key="`keyword-${evidence}`">关键词证据：{{ evidence }}</p>
+        <p v-for="evidence in stringList(item, 'semantic_evidence')" :key="`semantic-${evidence}`">语义证据：{{ evidence }}</p>
+        <template v-if="stringList(item, 'keyword_evidence').length === 0 && stringList(item, 'semantic_evidence').length === 0">
+          <p v-for="evidence in stringList(item, 'evidence')" :key="evidence">证据：{{ evidence }}</p>
+        </template>
       </div>
     </div>
   </section>

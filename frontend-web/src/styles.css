@@ -59,6 +59,7 @@ progress { accent-color: #0f766e; height: 8px; width: 100%; }
 .evidence-item p { color: #627d98; font-size: 14px; margin: 4px 0; }
 .evidence-detail span { border-radius: 12px; font-size: 12px; font-weight: 800; padding: 3px 8px; }
 .supported { background: #d9f5ef; color: #087f5b; }
+.partial { background: #e7f5ff; color: #1864ab; }
 .missing_evidence { background: #fff3bf; color: #8d5b00; }
 .error-message { background: #ffe3e3; border-left: 4px solid #c92a2a; color: #a61e1e; padding: 12px; }
 .success-message { background: #d9f5ef; border-left: 4px solid #087f5b; color: #065f46; padding: 12px; }

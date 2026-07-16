@@ -17,11 +17,23 @@ from app.report_parser import extract_json_block
 from app.report_renderer import render_markdown_report
 from app.jobmatch_crew import run_jobmatch_crew
 from app.llm_factory import build_llm
-from app.schemas import ActionPlanItem, JobMatchAnalysis, ScoreDimension
+from app.schemas import ActionPlanItem, JobMatchAnalysis, RequirementMatch, ScoreDimension
 from app.services.market_profile_service import SKILL_KEYWORDS
 
 
 logger = logging.getLogger(__name__)
+
+
+SEMANTIC_SKILL_ALIASES: dict[str, tuple[str, ...]] = {
+    "FastAPI": ("异步接口", "后端接口", "web api"),
+    "RESTful API": ("接口设计", "服务端接口", "api 接口"),
+    "MySQL": ("关系型数据库", "sql 数据库"),
+    "Redis": ("缓存", "分布式缓存"),
+    "Docker": ("容器化", "容器部署"),
+    "RAG": ("检索增强", "知识库问答"),
+    "大模型 API": ("大语言模型", "llm", "openai", "deepseek"),
+    "Prompt": ("提示词", "提示工程"),
+}
 
 
 def _build_fit_strategy(score: int | None, missing_skills: list[str]) -> dict:
@@ -62,22 +74,142 @@ def _assistant_summary(strategy: dict, missing_skills: list[str]) -> str:
     return f"{strategy['title']}。{strategy['reason']}{suffix}"
 
 
+def _evidence_snippet(text: str, term: str, radius: int = 56) -> str:
+    """返回包含证据词的短片段，避免把整份简历写入分析产物。"""
+    lowered = text.lower()
+    index = lowered.find(term.lower())
+    if index < 0:
+        return ""
+    start = max(0, index - radius)
+    end = min(len(text), index + len(term) + radius)
+    snippet = " ".join(text[start:end].split())
+    return f"…{snippet}…" if start > 0 or end < len(text) else snippet
+
+
+def _requirement_category(jd_text: str, skill: str) -> str:
+    index = jd_text.lower().find(skill.lower())
+    context = jd_text[max(0, index - 50) : index + len(skill) + 50]
+    if any(marker in context for marker in ("加分", "优先", "最好", "nice to have")):
+        return "preferred"
+    return "must"
+
+
+def _build_requirement_matches(resume_text: str, jd_text: str) -> list[RequirementMatch]:
+    """先用可解释规则拆出逐条要求；后续可替换语义候选为向量检索。"""
+    resume_lower = resume_text.lower()
+    matches: list[RequirementMatch] = []
+    for skill in (skill for skill in SKILL_KEYWORDS if skill.lower() in jd_text.lower()):
+        keyword_evidence = []
+        semantic_evidence = []
+        if skill.lower() in resume_lower:
+            keyword_evidence.append(_evidence_snippet(resume_text, skill))
+        for alias in SEMANTIC_SKILL_ALIASES.get(skill, ()):
+            if alias.lower() in resume_lower and not keyword_evidence:
+                semantic_evidence.append(_evidence_snippet(resume_text, alias))
+        if keyword_evidence:
+            status = "supported"
+            confidence = 0.92
+        elif semantic_evidence:
+            status = "partial"
+            confidence = 0.65
+        else:
+            status = "missing_evidence"
+            confidence = 0.2
+        matches.append(
+            RequirementMatch(
+                requirement=skill,
+                category=_requirement_category(jd_text, skill),
+                status=status,
+                keyword_evidence=keyword_evidence,
+                semantic_evidence=semantic_evidence,
+                confidence=confidence,
+                suggestion=(
+                    "保留并量化该能力的项目证据。"
+                    if status == "supported"
+                    else "补充与该能力相关的真实项目产出。"
+                ),
+            )
+        )
+    return matches
+
+
+def _ensure_requirement_matches(
+    analysis: JobMatchAnalysis, fallback: JobMatchAnalysis | None = None
+) -> JobMatchAnalysis:
+    """兼容旧版 Agent JSON，确保每份报告都有逐条要求结果。"""
+    if analysis.requirement_matches:
+        return analysis
+    if fallback and fallback.requirement_matches:
+        analysis.requirement_matches = fallback.requirement_matches
+        return analysis
+    analysis.requirement_matches = [
+        RequirementMatch(
+            requirement=item.name,
+            status="supported" if item.evidence else "missing_evidence",
+            keyword_evidence=item.evidence,
+            confidence=0.8 if item.evidence else 0.2,
+            suggestion=item.suggestion,
+        )
+        for item in analysis.score_dimensions
+    ]
+    return analysis
+
+
 def _build_rule_based_analysis(resume_text: str, jd_text: str) -> JobMatchAnalysis:
     """先生成秒级、可解释的基线，避免模型失败时用户只得到空白页。"""
-    resume_lower = resume_text.lower()
-    jd_lower = jd_text.lower()
-    required_skills = [skill for skill in SKILL_KEYWORDS if skill.lower() in jd_lower]
-    matched_skills = [skill for skill in required_skills if skill.lower() in resume_lower]
-    missing_skills = [skill for skill in required_skills if skill not in matched_skills]
+    requirement_matches = _build_requirement_matches(resume_text, jd_text)
+    required_skills = [item.requirement for item in requirement_matches]
+    matched_skills = [
+        item.requirement for item in requirement_matches if item.status == "supported"
+    ]
+    missing_skills = [
+        item.requirement
+        for item in requirement_matches
+        if item.status in {"partial", "missing_evidence"}
+    ]
     denominator = max(len(required_skills), 1)
-    score = round(len(matched_skills) / denominator * 100)
+    score = round(
+        sum(
+            1 if item.status == "supported" else 0.6 if item.status == "partial" else 0
+            for item in requirement_matches
+        )
+        / denominator
+        * 100
+    )
     dimensions = [
         ScoreDimension(
             name=skill,
-            score=10 if skill in matched_skills else 0,
+            score=next(
+                (
+                    10
+                    if item.status == "supported"
+                    else 6
+                    if item.status == "partial"
+                    else 0
+                    for item in requirement_matches
+                    if item.requirement == skill
+                ),
+                0,
+            ),
             max_score=10,
-            evidence=[f"简历文本中出现“{skill}”"] if skill in matched_skills else [],
-            suggestion="补充与该能力相关的真实项目产出。" if skill not in matched_skills else "保留并量化该能力的项目证据。",
+            evidence=(
+                next(
+                    (
+                        item.keyword_evidence + item.semantic_evidence
+                        for item in requirement_matches
+                        if item.requirement == skill
+                    ),
+                    [],
+                )
+            ),
+            suggestion=next(
+                (
+                    item.suggestion
+                    for item in requirement_matches
+                    if item.requirement == skill
+                ),
+                "补充与该能力相关的真实项目产出。",
+            ),
         )
         for skill in required_skills[:8]
     ]
@@ -93,6 +225,7 @@ def _build_rule_based_analysis(resume_text: str, jd_text: str) -> JobMatchAnalys
         matched_skills=matched_skills,
         missing_skills=missing_skills,
         score_dimensions=dimensions,
+        requirement_matches=requirement_matches,
         action_plan=[
             ActionPlanItem(
                 day=index + 1,
@@ -168,17 +301,29 @@ def _run_follow_up_response(resume_text: str, report: dict, question: str) -> st
 
 
 def _evidence_payload(analysis: JobMatchAnalysis) -> dict:
+    matches = analysis.requirement_matches or [
+        RequirementMatch(
+            requirement=item.name,
+            status="supported" if item.evidence else "missing_evidence",
+            keyword_evidence=item.evidence,
+            confidence=0.8 if item.evidence else 0.2,
+            suggestion=item.suggestion,
+        )
+        for item in analysis.score_dimensions
+    ]
     return {
         "items": [
             {
-                "requirement": item.name,
-                "score": item.score,
-                "max_score": item.max_score,
-                "evidence": item.evidence,
+                "requirement": item.requirement,
+                "category": item.category,
+                "keyword_evidence": item.keyword_evidence,
+                "semantic_evidence": item.semantic_evidence,
+                "evidence": item.keyword_evidence + item.semantic_evidence,
+                "confidence": item.confidence,
                 "suggestion": item.suggestion,
-                "status": "supported" if item.evidence else "missing_evidence",
+                "status": item.status,
             }
-            for item in analysis.score_dimensions
+            for item in matches
         ]
     }
 
@@ -343,6 +488,7 @@ def run_copilot_turn(turn_id: int) -> None:
         )
         return
 
+    analysis = _ensure_requirement_matches(analysis, baseline)
     update_copilot_turn(turn_id, status="running", stage="building_recommendation", progress=85)
     strategy = _build_fit_strategy(analysis.score, analysis.missing_skills)
 

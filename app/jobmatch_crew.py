@@ -109,6 +109,9 @@ def run_jobmatch_crew(resume_text: str, jd_text: str, target_role: str) -> tuple
         description=f"""
         根据前面所有结果，生成结构化求职分析结果。
 
+        对每一条岗位要求，分别区分关键词证据和语义相关证据。没有明确简历证据时，
+        必须标记为 missing_evidence，不得因为岗位要求出现过就判定候选人具备该能力。
+
         请参考以下面试题知识库生成更贴合的面试问题：
 
         {interview_knowledge}
@@ -123,6 +126,8 @@ def run_jobmatch_crew(resume_text: str, jd_text: str, target_role: str) -> tuple
         7. 面试高频问题 interview_questions
         8. 7 天补强计划 action_plan
         9. 风险点 risk_points
+        10. 逐条岗位要求 requirement_matches，每项包含 requirement、category、status、
+            keyword_evidence、semantic_evidence、confidence、suggestion
         """,
         expected_output="符合 JobMatchAnalysis schema 的结构化求职分析结果",
         agent=report_writer,

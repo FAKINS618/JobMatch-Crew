@@ -22,6 +22,17 @@ JSON 字段要求：
       "suggestion": "该维度的改进建议"
     }
   ],
+  "requirement_matches": [
+    {
+      "requirement": "岗位要求",
+      "category": "must",
+      "status": "supported",
+      "keyword_evidence": ["简历中直接出现的证据片段"],
+      "semantic_evidence": ["与要求语义相关但没有完全相同关键词的证据片段"],
+      "confidence": 0.0,
+      "suggestion": "保留或补充证据的建议"
+    }
+  ],
   "resume_bullets": [
     "可以直接写入简历的项目 bullet"
   ],
@@ -51,3 +62,5 @@ JSON 字段要求：
 4. action_plan 至少 7 天。
 5. 不要编造候选人没有的经历。
 6. evidence 必须能从简历、JD 或前面分析结果中找到依据。
+7. requirement_matches 必须覆盖前面识别出的关键岗位要求；没有证据时 status 必须为 missing_evidence。
+8. keyword_evidence 和 semantic_evidence 必须分开填写，不要把推测当成关键词命中。

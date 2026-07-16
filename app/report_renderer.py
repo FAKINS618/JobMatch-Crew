@@ -42,9 +42,34 @@ def render_markdown_report(analysis: JobMatchAnalysis) -> str:
             ]
         )
 
+    if analysis.requirement_matches:
+        lines.extend(["## 5. 逐条岗位要求证据", ""])
+        for item in analysis.requirement_matches:
+            status = {
+                "supported": "已有直接证据",
+                "partial": "语义相关，证据待补强",
+                "missing_evidence": "缺少简历证据",
+            }.get(item.status, item.status)
+            lines.extend(
+                [
+                    f"### {item.requirement}（{status}，可信度 {round(item.confidence * 100)}%）",
+                    "",
+                    "**关键词证据：**",
+                    "",
+                    _render_list(item.keyword_evidence),
+                    "",
+                    "**语义证据：**",
+                    "",
+                    _render_list(item.semantic_evidence),
+                    "",
+                    f"**建议：** {item.suggestion}",
+                    "",
+                ]
+            )
+
     lines.extend(
         [
-            "## 5. 可写入简历的项目 Bullet",
+            "## 可写入简历的项目 Bullet",
             "",
             _render_list(analysis.resume_bullets),
             "",
@@ -60,7 +85,7 @@ def render_markdown_report(analysis: JobMatchAnalysis) -> str:
             lines.append(f"   - 出题原因：{item.reason}")
         lines.append("")
 
-    lines.extend(["## 7. 7 天补强计划", ""])
+    lines.extend(["## 7 天补强计划", ""])
 
     for item in analysis.action_plan:
         lines.append(f"- 第 {item.day} 天：{item.task}")
@@ -70,7 +95,7 @@ def render_markdown_report(analysis: JobMatchAnalysis) -> str:
     lines.extend(
         [
             "",
-            "## 8. 风险点",
+            "## 风险点",
             "",
             _render_list(analysis.risk_points),
         ]

@@ -8,6 +8,7 @@ from app.schemas.analysis import (
     MarketResumeMatchAnalysis,
     JobRecommendation,
     MarketDataQuality,
+    RequirementMatch,
 )
 from app.schemas.api import (
     JobMatchRequest,
@@ -67,6 +68,7 @@ __all__ = [
     "MarketMatchResponse",
     "JobRecommendation",
     "MarketDataQuality",
+    "RequirementMatch",
     "ResumeProject",
     "ResumeProfile",
     "ResumeParseRequest",
