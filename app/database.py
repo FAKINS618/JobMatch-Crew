@@ -330,6 +330,52 @@ def init_db() -> None:
             """
         )
         conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                current_stage TEXT NOT NULL DEFAULT 'queued',
+                pipeline_version TEXT NOT NULL,
+                error_message TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (turn_id) REFERENCES analysis_turns(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_stage_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                analysis_run_id INTEGER NOT NULL,
+                stage TEXT NOT NULL,
+                status TEXT NOT NULL,
+                input_json TEXT NOT NULL,
+                output_json TEXT NOT NULL,
+                validation_error TEXT NOT NULL DEFAULT '',
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                latency_ms INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (analysis_run_id) REFERENCES analysis_runs(id),
+                UNIQUE(analysis_run_id, stage)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS requirement_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                analysis_run_id INTEGER NOT NULL,
+                requirement_json TEXT NOT NULL,
+                candidates_json TEXT NOT NULL,
+                decision_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (analysis_run_id) REFERENCES analysis_runs(id)
+            )
+            """
+        )
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_copilot_messages_session ON copilot_messages(session_id, id)"
         )
         conn.execute(
@@ -337,6 +383,12 @@ def init_db() -> None:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_turn ON analysis_artifacts(turn_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_runs_turn ON analysis_runs(turn_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_stage_runs_run ON agent_stage_runs(analysis_run_id, id)"
         )
 
 
@@ -397,6 +449,105 @@ def _ensure_turn_columns(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"ALTER TABLE analysis_turns ADD COLUMN {column_name} {column_type}"
             )
+
+
+def create_analysis_run(turn_id: int, pipeline_version: str) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute(
+            "INSERT INTO analysis_runs (turn_id, pipeline_version) VALUES (?, ?)",
+            (turn_id, pipeline_version),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def update_analysis_run(
+    run_id: int,
+    *,
+    status: str,
+    current_stage: str,
+    error_message: str = "",
+) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            UPDATE analysis_runs
+            SET status = ?, current_stage = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (status, current_stage, error_message, run_id),
+        )
+        conn.commit()
+
+
+def save_agent_stage_run(
+    *,
+    run_id: int,
+    stage: str,
+    status: str,
+    input_json: str,
+    output_json: str,
+    validation_error: str = "",
+    retry_count: int = 0,
+    latency_ms: int | None = None,
+) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO agent_stage_runs (
+                analysis_run_id, stage, status, input_json, output_json,
+                validation_error, retry_count, latency_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(analysis_run_id, stage) DO UPDATE SET
+                status = excluded.status,
+                input_json = excluded.input_json,
+                output_json = excluded.output_json,
+                validation_error = excluded.validation_error,
+                retry_count = excluded.retry_count,
+                latency_ms = excluded.latency_ms
+            """,
+            (run_id, stage, status, input_json, output_json, validation_error, retry_count, latency_ms),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def save_requirement_evidence(
+    *,
+    run_id: int,
+    requirement_json: str,
+    candidates_json: str,
+    decision_json: str | None,
+) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO requirement_evidence (
+                analysis_run_id, requirement_json, candidates_json, decision_json
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (run_id, requirement_json, candidates_json, decision_json),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def list_analysis_runs(turn_id: int) -> list[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM analysis_runs WHERE turn_id = ? ORDER BY id", (turn_id,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def list_agent_stage_runs(run_id: int) -> list[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM agent_stage_runs WHERE analysis_run_id = ? ORDER BY id", (run_id,)
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def save_report(

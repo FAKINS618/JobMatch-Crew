@@ -13,6 +13,8 @@ from app.database import (
     update_copilot_artifact,
     update_copilot_turn,
 )
+from app.agent_pipeline import run_analysis_pipeline
+from app.schemas.agent_pipeline import AgentStage
 from app.report_parser import extract_json_block
 from app.report_renderer import render_markdown_report
 from app.jobmatch_crew import run_jobmatch_crew
@@ -467,15 +469,53 @@ def run_copilot_turn(turn_id: int) -> None:
         report_id=report_id,
     )
 
+    used_legacy_hook = False
     try:
-        analysis = _run_fast_agent_analysis(
-            resume["raw_text"],
-            jd_text,
-            session["target_role"] or resume["target_role"] or "计算机相关岗位",
-        )
+        target_role = session["target_role"] or resume["target_role"] or "计算机相关岗位"
+
+        def on_pipeline_stage(stage: AgentStage, progress: int) -> None:
+            # Keep the existing turn-stage vocabulary stable for the Vue client;
+            # detailed stage names are persisted in analysis_runs.
+            turn_stage = {
+                AgentStage.EVIDENCE_RETRIEVED: "matching_evidence",
+                AgentStage.EVIDENCE_JUDGED: "matching_evidence",
+                AgentStage.SCORED: "building_recommendation",
+                AgentStage.REPORT_GENERATED: "building_recommendation",
+                AgentStage.VALIDATED: "completed",
+                AgentStage.DEGRADED: "rule_based_ready",
+                AgentStage.FAILED: "failed",
+            }.get(stage, "deepening_analysis")
+            update_copilot_turn(
+                turn_id,
+                status="running",
+                stage=turn_stage,
+                progress=progress,
+                report_id=report_id,
+            )
+
+        # Existing tests and downstream callers can still replace the legacy
+        # hook. The normal application path uses the new evidence pipeline.
+        if _run_fast_agent_analysis is _run_multi_agent_analysis:
+            pipeline_result = run_analysis_pipeline(
+                turn_id=turn_id,
+                resume_text=resume["raw_text"],
+                jd_text=jd_text,
+                target_role=target_role,
+                use_llm=True,
+                on_stage=on_pipeline_stage,
+            )
+            analysis = pipeline_result.analysis
+            pipeline_degraded = pipeline_result.degraded
+        else:
+            used_legacy_hook = True
+            analysis = _run_fast_agent_analysis(
+                resume["raw_text"], jd_text, target_role
+            )
+            pipeline_degraded = False
     except Exception as exc:
-        logger.exception("Copilot multi-agent analysis failed")
+        logger.exception("Copilot evidence pipeline failed")
         analysis = None
+        pipeline_degraded = True
 
     if analysis is None:
         update_copilot_turn(
@@ -512,7 +552,13 @@ def run_copilot_turn(turn_id: int) -> None:
         score=analysis.score,
         markdown_report=render_markdown_report(analysis),
         parsed_result=analysis.model_dump_json(),
-        parse_status="copilot_multi_agent",
+        parse_status=(
+            "copilot_multi_agent"
+            if used_legacy_hook
+            else "copilot_rule_based"
+            if pipeline_degraded
+            else "copilot_pipeline"
+        ),
         raw_result=None,
     )
     save_copilot_assistant_message(
