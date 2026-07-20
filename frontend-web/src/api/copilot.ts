@@ -125,6 +125,25 @@ export interface EvidenceFeedback {
   created_at: string;
 }
 
+export interface AutoMarketSearchResponse {
+  trigger: {
+    id: number;
+    resume_version_id: number;
+    source_turn_id: number;
+    analysis_task_id: number;
+    report_id: number | null;
+    target_role: string;
+    city: string;
+    trigger_mode: "auto" | "manual";
+    status: "pending" | "running" | "success" | "failed" | "skipped";
+    reason: string;
+    created_at: string | null;
+    updated_at: string | null;
+  };
+  task_status: string;
+  reused: boolean;
+}
+
 export function listResumeVersions(): Promise<ResumeVersion[]> {
   return apiFetch("/api/resumes/versions");
 }
@@ -153,6 +172,12 @@ export function getTurn(turnId: number) {
 
 export function getTurnEvidence(turnId: number) {
   return apiFetch<EvidenceChain>(`/api/v1/copilot/turns/${turnId}/evidence`);
+}
+
+export function triggerMarketSearch(turnId: number) {
+  return apiFetch<AutoMarketSearchResponse>(`/api/v1/copilot/turns/${turnId}/market-search`, {
+    method: "POST",
+  });
 }
 
 export function submitEvidenceFeedback(

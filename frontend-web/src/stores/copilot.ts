@@ -9,6 +9,7 @@ import {
   listResumeVersions,
   sendMessage,
   submitEvidenceFeedback,
+  triggerMarketSearch,
   type AnalysisTurn,
   type CopilotSession,
   type EvidenceChain,
@@ -16,6 +17,8 @@ import {
   type EvidenceStatus,
   type ResumeVersion,
 } from "@/api/copilot";
+import { ApiError } from "@/api/client";
+import { getMarketSearchPreference } from "@/api/workspace";
 
 export const useCopilotStore = defineStore("copilot", () => {
   const session = ref<CopilotSession | null>(null);
@@ -79,11 +82,33 @@ export const useCopilotStore = defineStore("copilot", () => {
       if (turn.status === "completed") {
         session.value = await getSession(turn.session_id);
         void loadEvidence(turn.id);
+        void maybeTriggerMarketSearch(turn);
         return;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 700));
     }
     errorMessage.value = "基础结果已展示，深度分析仍在运行。稍后刷新页面可查看补充结果。";
+  }
+
+  async function maybeTriggerMarketSearch(turn: AnalysisTurn) {
+    if (turn.input_type !== "initial_jd" || !session.value?.resume_version_id) return;
+    const strategy = turn.artifacts.find((item) => item.artifact_type === "fit_strategy")?.payload;
+    if (strategy?.recommendation !== "apply_now") return;
+    try {
+      const preference = await getMarketSearchPreference(session.value.resume_version_id);
+      if (!preference.auto_search_enabled) return;
+      await triggerMarketSearch(turn.id);
+      noticeMessage.value = "已启动岗位搜索，结果将进入岗位收件箱。";
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        noticeMessage.value = "当前分析未满足自动搜索条件，未启动岗位搜索。";
+        return;
+      }
+      // Automatic search is auxiliary; keep the completed Copilot result visible.
+      if (!(error instanceof ApiError && error.status === 404)) {
+        noticeMessage.value = "分析已完成，岗位搜索暂未启动，可在岗位收件箱手动搜索。";
+      }
+    }
   }
 
   async function loadEvidence(turnId: number) {

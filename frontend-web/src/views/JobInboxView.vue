@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import {
   createJobTarget,
   createMarketMatchTask,
@@ -26,6 +27,7 @@ const selectedResumeId = ref<number | null>(null);
 const targetRole = ref("");
 const city = ref("");
 const marketTask = ref<MarketTask | null>(null);
+const route = useRoute();
 
 const marketReports = computed(() => reports.value.filter((report) => report.job_post_count > 0));
 const selectedPost = computed<JobPost | null>(() =>
@@ -70,7 +72,13 @@ async function loadReports() {
     const existingTargets = await listJobTargets();
     addedPostIds.value = new Set(existingTargets.map((target) => target.url));
     reports.value = (await listReports()).reports;
-    if (marketReports.value.length > 0) await openReport(marketReports.value[0].id);
+    if (marketReports.value.length > 0) {
+      const requestedReportId = Number(route.query.report);
+      const reportId = marketReports.value.some((report) => report.id === requestedReportId)
+        ? requestedReportId
+        : marketReports.value[0].id;
+      await openReport(reportId);
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "读取岗位收件箱失败";
   } finally {
