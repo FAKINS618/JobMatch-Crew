@@ -565,6 +565,57 @@ def list_agent_stage_runs(run_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def get_analysis_evidence_chain(turn_id: int) -> dict | None:
+    """Return only structured evidence data for the latest run of a turn."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        run = conn.execute(
+            """
+            SELECT id, status, current_stage, pipeline_version
+            FROM analysis_runs
+            WHERE turn_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (turn_id,),
+        ).fetchone()
+        if run is None:
+            return None
+        rows = conn.execute(
+            """
+            SELECT chunks_json, requirement_json, candidates_json, decision_json
+            FROM requirement_evidence
+            WHERE analysis_run_id = ?
+            ORDER BY id
+            """,
+            (run["id"],),
+        ).fetchall()
+
+    def parse_json(value: str | None, fallback: object) -> object:
+        try:
+            return json.loads(value or "")
+        except json.JSONDecodeError:
+            return fallback
+
+    return {
+        "analysis_run_id": run["id"],
+        "status": run["status"],
+        "current_stage": run["current_stage"],
+        "pipeline_version": run["pipeline_version"],
+        "items": [
+            {
+                "chunks": list(parse_json(row["chunks_json"], {}).values())
+                if isinstance(parse_json(row["chunks_json"], {}), dict)
+                else parse_json(row["chunks_json"], []),
+                "requirement": parse_json(row["requirement_json"], {}),
+                "candidates": parse_json(row["candidates_json"], []),
+                "decision": parse_json(row["decision_json"], None),
+            }
+            for row in rows
+        ],
+    }
+
+
 def save_report(
     target_role: str,
     score: int | None,
