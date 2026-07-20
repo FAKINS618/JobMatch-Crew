@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import ArtifactCards from "@/components/ArtifactCards.vue";
+import EvidenceChain from "@/components/EvidenceChain.vue";
 import { createActionItemsFromReport } from "@/api/workspace";
 import { useCopilotStore } from "@/stores/copilot";
 
@@ -144,6 +145,11 @@ async function decide(artifactId: number, decision: "accept" | "reject" | "ask" 
       <p v-if="store.errorMessage" class="error-message">{{ store.errorMessage }}</p>
       <p v-if="store.noticeMessage" class="success-message">{{ store.noticeMessage }}</p>
       <ArtifactCards :artifacts="newestArtifacts" :analysis-mode="analysisMode" :busy="store.isLoading" @decide="decide" />
+      <EvidenceChain
+        :chain="store.evidenceChain"
+        :loading="store.evidenceLoading"
+        :error="store.evidenceError"
+      />
     </template>
   </div>
 </template>
