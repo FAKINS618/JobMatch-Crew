@@ -74,6 +74,55 @@ class EvidenceDecision(BaseModel):
         return self
 
 
+class EvidenceFeedbackCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal["confirmed", "rejected", "corrected"]
+    corrected_status: Literal["supported", "partial", "missing_evidence"] | None = None
+    evidence_ids: list[str] = Field(default_factory=list, max_length=3)
+    note: str = Field(default="", max_length=300)
+
+    @model_validator(mode="after")
+    def validate_feedback(self):
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("evidence_ids 不可重复")
+        if self.verdict == "corrected" and self.corrected_status is None:
+            raise ValueError("corrected 必须指定 corrected_status")
+        if self.verdict != "corrected" and self.corrected_status is not None:
+            raise ValueError("confirmed/rejected 不应指定 corrected_status")
+        if self.corrected_status == "missing_evidence" and self.evidence_ids:
+            raise ValueError("missing_evidence 不允许关联 evidence_ids")
+        if self.corrected_status in {"supported", "partial"} and not self.evidence_ids:
+            raise ValueError("supported/partial 修正必须关联至少一条 evidence_id")
+        return self
+
+
+class EvidenceFeedbackRequest(EvidenceFeedbackCreate):
+    requirement_id: str = Field(min_length=1, max_length=80)
+
+
+class EvidenceFeedback(BaseModel):
+    id: int
+    turn_id: int
+    analysis_run_id: int
+    requirement_id: str = Field(min_length=1, max_length=80)
+    verdict: Literal["confirmed", "rejected", "corrected"]
+    corrected_status: Literal["supported", "partial", "missing_evidence"] | None = None
+    evidence_ids: list[str] = Field(default_factory=list, max_length=3)
+    note: str = Field(default="", max_length=300)
+    created_at: str
+
+    @model_validator(mode="after")
+    def validate_feedback(self):
+        EvidenceFeedbackCreate(
+            verdict=self.verdict,
+            corrected_status=self.corrected_status,
+            evidence_ids=self.evidence_ids,
+            note=self.note,
+        )
+        return self
+
+
 class ReportNarrative(BaseModel):
     """LLM may write narrative fields, but never factual match fields."""
 
@@ -100,6 +149,7 @@ class EvidenceChainItem(BaseModel):
     chunks: list[ResumeChunk] = Field(default_factory=list)
     candidates: list[EvidenceCandidate] = Field(default_factory=list)
     decision: EvidenceDecision | None = None
+    review: EvidenceFeedback | None = None
 
 
 class EvidenceChainResponse(BaseModel):
