@@ -38,6 +38,8 @@
 - 分离“趋势适配度”和“投递适配度”：趋势分可基于方向相关样本生成；投递分与 A/B/C 推荐只基于确认可投岗位。
 - FastAPI `BackgroundTasks` 支持市场分析任务状态查询；SQLite 保存历史报告和岗位来源。
 - 提供简历结构化解析与简历版本 API，供后续工作台接入“解析 - 确认 - 保存版本”流程。
+- 证据链支持人工确认、拒绝和修正，反馈历史可脱敏导出为离线评测候选样本。
+- 提供本地 `/health/ready`、运行能力查询和 SSE keepalive，便于单用户启动后检查服务状态。
 
 ## 功能演示
 
@@ -59,7 +61,7 @@
 
 报告优先展示匹配评分、已匹配技能数量、待补强技能数量和面试题数量，再按标签页查看细节，减少用户阅读长 Markdown 的成本。
 
-![结构化匹配总览](docs/images/analysis-overview.png)
+![结构化匹配总览](docs/images/skill-gap-suggestions.png)
 
 ### 4. 评分依据与可解释建议
 
@@ -150,13 +152,22 @@ Streamlit 兼容工作台：http://localhost:8501
 
 ```bash
 uv run pytest
+python -m evals.run_evals --retrieval tfidf
+
+cd frontend-web
+pnpm test
+pnpm build
+pnpm lint
 ```
 
-当前后端测试覆盖 API 基础可用性、Schema 校验、报告解析、岗位时效规则、岗位搜索去重、岗位 JSON-LD 验证、趋势适配度、RAG 检索、数据库时间转换、简历版本和副驾闭环；当前共 `47` 条后端测试通过，Vue API 客户端有独立单测。
+当前后端测试覆盖 API 基础可用性、Schema 校验、报告解析、岗位时效规则、岗位搜索去重、岗位 JSON-LD 验证、趋势适配度、RAG 检索、数据库时间转换、简历版本、副驾闭环和人工证据复核；当前共 `82` 条后端测试通过，Vue API 客户端有独立单测。
 
 ## 当前边界与后续方向
 
 - 岗位搜索当前以 Tavily 为入口，搜索结果可能是招聘聚合页或摘要；投递前仍需打开原链接确认岗位有效性。
-- 当前使用 SQLite 与 FastAPI `BackgroundTasks`，适合单机演示。多用户、高并发或可靠任务重试场景需要升级为 PostgreSQL 与任务队列。
+- 当前使用本地 SQLite 与 FastAPI `BackgroundTasks`，定位为单用户本机运行；不提供账号、租户隔离、可靠任务重试或公网部署能力。
+- `EMBEDDING_ENABLED=false` 时默认使用 TF-IDF；Hybrid 仅作为显式配置的实验策略，失败会受控回退。
+- 可通过 `python -m evals.export_reviewed_feedback --database jobmatch.db` 导出人工修正/拒绝的脱敏评测候选数据，不会覆盖现有 fixtures。
+- 启动后可运行 `powershell -ExecutionPolicy Bypass -File scripts/smoke.ps1` 检查健康状态和非敏感能力信息。
 - Vue 已覆盖副驾、简历版本、岗位收件箱、成长计划和投递管道；Streamlit 保留为兼容和调试入口。
 - 下一阶段优先完成：岗位详情的面试复盘、简历区块差异确认、投递事件时间线，以及账号和隐私隔离。
