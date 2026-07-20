@@ -5,8 +5,13 @@ import re
 
 from pydantic import BaseModel, Field
 
+from app.agent_pipeline.retrieval import (
+    EvidenceReranker,
+    ResumeRetriever,
+    RuleEvidenceReranker,
+    TfidfResumeRetriever,
+)
 from app.agent_pipeline.structured_runner import StageOutcome, run_structured
-from app.rag.resume_retriever import requirement_query, retrieve_resume_chunks
 from app.schemas.agent_pipeline import (
     EvidenceCandidate,
     EvidenceDecision,
@@ -20,25 +25,30 @@ class EvidenceDecisionBundle(BaseModel):
 
 
 def retrieve_candidates(
-    resume_text: str, requirements: list[JDRequirement], top_k: int = 3
+    resume_text: str,
+    requirements: list[JDRequirement],
+    top_k: int = 3,
+    *,
+    retriever: ResumeRetriever | None = None,
+    reranker: EvidenceReranker | None = None,
 ) -> tuple[dict[str, list[EvidenceCandidate]], dict[str, ResumeChunk]]:
     candidates: dict[str, list[EvidenceCandidate]] = {}
     resume_chunks: dict[str, ResumeChunk] = {}
+    retriever = retriever or TfidfResumeRetriever()
+    reranker = reranker or RuleEvidenceReranker()
     for requirement in requirements:
-        chunks = retrieve_resume_chunks(
-            resume_text, requirement_query(requirement.skill), top_k=top_k
-        )
+        retrieved = retriever.retrieve(requirement, resume_text, top_k=8)
+        ranked = reranker.rerank(requirement, retrieved, top_k=top_k)
         requirement_candidates: list[EvidenceCandidate] = []
-        for index, chunk in enumerate(chunks):
+        for index, candidate in enumerate(ranked):
             resume_chunk = resume_chunks.setdefault(
-                chunk.chunk_id,
+                candidate.chunk.id,
                 ResumeChunk(
-                    id=chunk.chunk_id,
-                    section=chunk.section,
-                    content=chunk.content,
+                    id=candidate.chunk.id,
+                    section=candidate.chunk.section,
+                    content=candidate.chunk.content,
                 ),
             )
-            lexical_score = max(0.0, min(float(chunk.score), 1.0))
             candidate_id = f"evidence-{requirement.id}-{index + 1}"
             requirement_candidates.append(
                 EvidenceCandidate(
@@ -46,8 +56,8 @@ def retrieve_candidates(
                     requirement_id=requirement.id,
                     chunk_id=resume_chunk.id,
                     snippet=f"[{resume_chunk.section}] {resume_chunk.content}",
-                    lexical_score=lexical_score,
-                    rerank_score=lexical_score,
+                    lexical_score=candidate.lexical_score,
+                    rerank_score=candidate.rerank_score,
                 )
             )
         candidates[requirement.id] = requirement_candidates

@@ -37,6 +37,12 @@ class ResumeChunk(BaseModel):
     end_offset: int = Field(default=0, ge=0)
 
 
+class ResumeChunkCandidate(BaseModel):
+    chunk: ResumeChunk
+    lexical_score: float = Field(ge=0, le=1)
+    rerank_score: float | None = Field(default=None, ge=0, le=1)
+
+
 class EvidenceCandidate(BaseModel):
     id: str = Field(min_length=1, max_length=120)
     requirement_id: str = Field(min_length=1, max_length=80)
@@ -84,3 +90,19 @@ class ScoringResult(BaseModel):
     project_relevance: float = Field(ge=0, le=1)
     review_required: bool = False
     review_reason: str = ""
+
+
+class EvidenceChainItem(BaseModel):
+    requirement: JDRequirement
+    chunks: list[ResumeChunk] = Field(default_factory=list)
+    candidates: list[EvidenceCandidate] = Field(default_factory=list)
+    decision: EvidenceDecision | None = None
+
+
+class EvidenceChainResponse(BaseModel):
+    turn_id: int
+    analysis_run_id: int
+    status: str
+    current_stage: str
+    pipeline_version: str
+    items: list[EvidenceChainItem] = Field(default_factory=list)
