@@ -11,6 +11,7 @@ from app.database import (
     create_artifact_decision,
     create_copilot_message_and_turn,
     create_copilot_session,
+    get_analysis_evidence_chain,
     get_copilot_session,
     get_copilot_turn,
 )
@@ -23,6 +24,7 @@ from app.schemas import (
     CopilotSessionDetailResponse,
     CopilotSessionResponse,
 )
+from app.schemas.agent_pipeline import EvidenceChainResponse
 from app.services.copilot_service import run_copilot_turn
 
 
@@ -70,6 +72,17 @@ def get_turn(turn_id: int) -> AnalysisTurnResponse:
     if turn is None:
         raise HTTPException(status_code=404, detail="分析回合不存在")
     return AnalysisTurnResponse.model_validate(turn)
+
+
+@router.get("/turns/{turn_id}/evidence", response_model=EvidenceChainResponse)
+def get_turn_evidence(turn_id: int) -> EvidenceChainResponse:
+    """Return structured requirement evidence without raw prompts or resume text."""
+    if get_copilot_turn(turn_id) is None:
+        raise HTTPException(status_code=404, detail="分析回合不存在")
+    evidence = get_analysis_evidence_chain(turn_id)
+    if evidence is None:
+        raise HTTPException(status_code=404, detail="证据链不存在")
+    return EvidenceChainResponse.model_validate({"turn_id": turn_id, **evidence})
 
 
 @router.get("/turns/{turn_id}/events")

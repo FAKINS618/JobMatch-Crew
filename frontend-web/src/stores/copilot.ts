@@ -5,10 +5,12 @@ import {
   decideArtifact,
   getSession,
   getTurn,
+  getTurnEvidence,
   listResumeVersions,
   sendMessage,
   type AnalysisTurn,
   type CopilotSession,
+  type EvidenceChain,
   type ResumeVersion,
 } from "@/api/copilot";
 
@@ -19,6 +21,9 @@ export const useCopilotStore = defineStore("copilot", () => {
   const errorMessage = ref("");
   const noticeMessage = ref("");
   const activeTurn = ref<AnalysisTurn | null>(null);
+  const evidenceChain = ref<EvidenceChain | null>(null);
+  const evidenceLoading = ref(false);
+  const evidenceError = ref("");
   const isAnalyzing = computed(() => ["pending", "running"].includes(activeTurn.value?.status ?? ""));
   const hasActiveContext = computed(() => Boolean(session.value?.active_report_id));
 
@@ -48,6 +53,8 @@ export const useCopilotStore = defineStore("copilot", () => {
     noticeMessage.value = "";
     try {
       activeTurn.value = await sendMessage(session.value.id, content.trim());
+      evidenceChain.value = null;
+      evidenceError.value = "";
       session.value = await getSession(session.value.id);
       void pollTurn(activeTurn.value.id);
     } catch (error) {
@@ -68,11 +75,25 @@ export const useCopilotStore = defineStore("copilot", () => {
       }
       if (turn.status === "completed") {
         session.value = await getSession(turn.session_id);
+        void loadEvidence(turn.id);
         return;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 700));
     }
     errorMessage.value = "基础结果已展示，深度分析仍在运行。稍后刷新页面可查看补充结果。";
+  }
+
+  async function loadEvidence(turnId: number) {
+    evidenceLoading.value = true;
+    evidenceError.value = "";
+    try {
+      evidenceChain.value = await getTurnEvidence(turnId);
+    } catch (error) {
+      evidenceChain.value = null;
+      evidenceError.value = error instanceof Error ? error.message : "证据链暂时无法加载";
+    } finally {
+      evidenceLoading.value = false;
+    }
   }
 
   async function decide(artifactId: number, decision: "accept" | "reject" | "ask" | "create_task") {
@@ -88,6 +109,9 @@ export const useCopilotStore = defineStore("copilot", () => {
     errorMessage,
     noticeMessage,
     activeTurn,
+    evidenceChain,
+    evidenceLoading,
+    evidenceError,
     loadResumeVersions,
     startSession,
     submit,

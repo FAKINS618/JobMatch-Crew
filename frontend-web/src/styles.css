@@ -61,6 +61,18 @@ progress { accent-color: #0f766e; height: 8px; width: 100%; }
 .supported { background: #d9f5ef; color: #087f5b; }
 .partial { background: #e7f5ff; color: #1864ab; }
 .missing_evidence { background: #fff3bf; color: #8d5b00; }
+.evidence-chain-section { border-left: 4px solid #2563eb; }
+.evidence-loading { color: #627d98; font-size: 13px; }
+.evidence-chain-error { background: #fff5f5; border-left: 3px solid #c92a2a; color: #a61e1e; padding: 10px 12px; }
+.evidence-chain-list { display: grid; gap: 14px; }
+.evidence-chain-item { border-top: 1px solid #e5edf5; padding-top: 14px; }
+.evidence-chain-heading { align-items: start; display: flex; gap: 12px; justify-content: space-between; }
+.evidence-chain-heading p, .evidence-rationale { color: #627d98; font-size: 13px; margin: 4px 0 0; }
+.evidence-status { border-radius: 12px; flex-shrink: 0; font-size: 12px; font-weight: 800; padding: 3px 8px; }
+.evidence-candidate-list { display: grid; gap: 8px; margin-top: 10px; }
+.evidence-candidate { background: #f0f4f8; border-left: 3px solid #bcccdc; padding: 9px 10px; }
+.evidence-candidate p { margin: 0 0 4px; white-space: pre-wrap; }
+.evidence-candidate small { color: #627d98; }
 .error-message { background: #ffe3e3; border-left: 4px solid #c92a2a; color: #a61e1e; padding: 12px; }
 .success-message { background: #d9f5ef; border-left: 4px solid #087f5b; color: #065f46; padding: 12px; }
 .resume-row { align-items: center; border-top: 1px solid #e5edf5; display: flex; justify-content: space-between; padding: 16px 0; }

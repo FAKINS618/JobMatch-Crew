@@ -73,6 +73,40 @@ export interface CopilotSession {
   turns: AnalysisTurn[];
 }
 
+export interface EvidenceChain {
+  turn_id: number;
+  analysis_run_id: number;
+  status: string;
+  current_stage: string;
+  pipeline_version: string;
+  items: Array<{
+    requirement: {
+      id: string;
+      text: string;
+      skill: string;
+      category: "must" | "preferred" | "context";
+      weight: number;
+      source_quote: string;
+    };
+    chunks: Array<{ id: string; section: string; content: string }>;
+    candidates: Array<{
+      id: string;
+      requirement_id: string;
+      chunk_id: string;
+      snippet: string;
+      lexical_score: number;
+      rerank_score: number | null;
+    }>;
+    decision: {
+      requirement_id: string;
+      status: "supported" | "partial" | "missing_evidence";
+      evidence_ids: string[];
+      confidence: number;
+      rationale: string;
+    } | null;
+  }>;
+}
+
 export function listResumeVersions(): Promise<ResumeVersion[]> {
   return apiFetch("/api/resumes/versions");
 }
@@ -97,6 +131,10 @@ export function sendMessage(sessionId: number, content: string) {
 
 export function getTurn(turnId: number) {
   return apiFetch<AnalysisTurn>(`/api/v1/copilot/turns/${turnId}`);
+}
+
+export function getTurnEvidence(turnId: number) {
+  return apiFetch<EvidenceChain>(`/api/v1/copilot/turns/${turnId}/evidence`);
 }
 
 export function decideArtifact(

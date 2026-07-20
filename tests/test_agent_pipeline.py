@@ -5,6 +5,7 @@ from app.agent_pipeline.evidence_judge import validate_decisions
 from app.agent_pipeline.jd_extractor import validate_requirement_quotes
 from app.agent_pipeline.orchestrator import run_analysis_pipeline
 from app.agent_pipeline.report_writer import write_report
+from app.agent_pipeline.retrieval import RuleEvidenceReranker
 from app.agent_pipeline.scorer import score_requirements
 from app.agent_pipeline.structured_runner import StageOutcome, run_structured
 from app.config import settings
@@ -13,6 +14,8 @@ from app.schemas.agent_pipeline import (
     EvidenceDecision,
     ReportNarrative,
     JDRequirement,
+    ResumeChunk,
+    ResumeChunkCandidate,
 )
 from app.agent_pipeline.evidence_judge import EvidenceDecisionBundle
 from app.agent_pipeline.jd_extractor import JDRequirementBundle
@@ -150,6 +153,45 @@ def test_score_is_deterministic_and_model_cannot_choose_total():
     assert result.score == 85
     assert result.must_coverage == 1
     assert result.project_relevance == 1
+
+
+def test_rule_reranker_prioritizes_exact_skill_over_expansion_match():
+    requirement = JDRequirement(
+        id="req-redis",
+        text="Redis 缓存能力",
+        skill="Redis",
+        category="must",
+        source_quote="要求 Redis 缓存能力",
+    )
+    candidates = [
+        ResumeChunkCandidate(
+            chunk=ResumeChunk(id="resume-2", section="项目经历", content="完成缓存设计"),
+            lexical_score=0.40,
+        ),
+        ResumeChunkCandidate(
+            chunk=ResumeChunk(id="resume-1", section="专业技能", content="使用 Redis"),
+            lexical_score=0.30,
+        ),
+    ]
+    ranked = RuleEvidenceReranker().rerank(requirement, candidates, top_k=2)
+    assert [item.chunk.id for item in ranked] == ["resume-1", "resume-2"]
+    assert ranked[0].rerank_score > ranked[1].rerank_score
+
+
+def test_rule_reranker_has_stable_chunk_id_tiebreaker():
+    requirement = _requirement()
+    candidates = [
+        ResumeChunkCandidate(
+            chunk=ResumeChunk(id="resume-b", section="其他", content="普通描述"),
+            lexical_score=0.2,
+        ),
+        ResumeChunkCandidate(
+            chunk=ResumeChunk(id="resume-a", section="其他", content="普通描述"),
+            lexical_score=0.2,
+        ),
+    ]
+    ranked = RuleEvidenceReranker().rerank(requirement, candidates, top_k=2)
+    assert [item.chunk.id for item in ranked] == ["resume-a", "resume-b"]
 
 
 def test_report_writer_ignores_factual_fields_from_llm(monkeypatch):
