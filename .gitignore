@@ -13,3 +13,4 @@ build/
 *.log
 frontend-web/node_modules/
 frontend-web/dist/
+evals/results/

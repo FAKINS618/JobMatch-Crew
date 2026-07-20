@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     tavily_api_key: str | None = None
     database_path: Path = BASE_DIR / "jobmatch.db"
 
+    # Optional OpenAI-compatible embedding endpoint. Disabled by default so
+    # offline and existing TF-IDF deployments never make network requests.
+    embedding_enabled: bool = False
+    embedding_model: str = ""
+    embedding_api_key: str | None = None
+    embedding_base_url: str = ""
+    embedding_timeout_seconds: int = 15
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

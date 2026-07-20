@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from app import database
 from app.agent_pipeline.evidence_judge import validate_decisions
@@ -19,6 +20,8 @@ from app.schemas.agent_pipeline import (
 )
 from app.agent_pipeline.evidence_judge import EvidenceDecisionBundle
 from app.agent_pipeline.jd_extractor import JDRequirementBundle
+from evals.models import EvaluationCase, EvaluationFixture, ExpectedEvidence, ExpectedRequirement
+from evals.run_evals import _case_metrics, load_fixtures
 
 
 def _requirement() -> JDRequirement:
@@ -408,3 +411,109 @@ def test_pipeline_falls_back_when_llm_is_unavailable(tmp_path, monkeypatch):
             (runs[0]["id"],),
         ).fetchone()[0]
     assert evidence_count == len(result.requirements)
+
+
+def test_offline_fixtures_validate_with_pydantic():
+    fixtures = load_fixtures()
+    assert len(fixtures) == 5
+    assert {fixture.case.id for fixture in fixtures} == {
+        "python-backend-01",
+        "java-backend-01",
+        "frontend-01",
+        "rag-llm-01",
+        "synonym-gap-01",
+    }
+
+
+def test_offline_metrics_return_zero_recall_for_empty_candidates():
+    fixture = EvaluationFixture(
+        case=EvaluationCase(
+            id="empty-candidate",
+            target_role="Python 后端开发实习",
+            resume_text="项目经历：完成后端练习和接口文档整理，记录了学习过程和测试结果。" * 3,
+            jd_text="岗位要求 Python 后端开发能力，负责接口实现、服务维护、问题排查和基础测试。" * 2,
+        ),
+        expected_requirements=[ExpectedRequirement(skill="Python", category="must")],
+        expected_evidence=[
+            ExpectedEvidence(
+                requirement_skill="Python",
+                expected_chunk_keywords=["Python"],
+                expected_status="supported",
+            )
+        ],
+    )
+    requirement = JDRequirement(
+        id="req-1",
+        text="Python",
+        skill="Python",
+        category="must",
+        source_quote="岗位要求 Python",
+    )
+    result = SimpleNamespace(requirements=[requirement], decisions=[], degraded=False)
+
+    metrics = _case_metrics(fixture, result, [], {"items": []})
+
+    assert metrics.evidence_recall_at_3 == 0
+
+
+def test_offline_metrics_false_support_is_zero_without_expected_supported():
+    fixture = EvaluationFixture(
+        case=EvaluationCase(
+            id="no-supported",
+            target_role="Python 后端开发实习",
+            resume_text="项目经历：完成后端练习和接口文档整理，记录了学习过程和测试结果。" * 3,
+            jd_text="岗位要求 Python 后端开发能力，负责接口实现、服务维护、问题排查和基础测试。" * 2,
+        ),
+        expected_requirements=[ExpectedRequirement(skill="Python", category="must")],
+        expected_evidence=[
+            ExpectedEvidence(
+                requirement_skill="Python",
+                expected_chunk_keywords=["后端"],
+                expected_status="partial",
+            )
+        ],
+    )
+    requirement = JDRequirement(
+        id="req-1",
+        text="Python",
+        skill="Python",
+        category="must",
+        source_quote="岗位要求 Python",
+    )
+    candidate = EvidenceCandidate(
+        id="evidence-1",
+        requirement_id="req-1",
+        chunk_id="resume-1",
+        snippet="[项目经历] 后端练习",
+        lexical_score=0.2,
+        rerank_score=0.2,
+    )
+    decision = EvidenceDecision(
+        requirement_id="req-1",
+        status="partial",
+        evidence_ids=[candidate.id],
+        confidence=0.5,
+        rationale="只有相关项目描述",
+    )
+    result = SimpleNamespace(requirements=[requirement], decisions=[decision], degraded=False)
+    chain = {
+        "items": [
+            {
+                "requirement": requirement.model_dump(),
+                "candidates": [candidate.model_dump()],
+            }
+        ]
+    }
+
+    metrics = _case_metrics(fixture, result, [], chain)
+
+    assert metrics.false_support_rate == 0
+
+
+def test_offline_metrics_are_deterministic():
+    fixtures = load_fixtures()
+    fixture = fixtures[0]
+    result = SimpleNamespace(requirements=[], decisions=[], degraded=False)
+    first = _case_metrics(fixture, result, [], {"items": []})
+    second = _case_metrics(fixture, result, [], {"items": []})
+    assert first == second

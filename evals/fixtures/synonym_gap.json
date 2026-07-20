@@ -1,0 +1,6 @@
+{
+  "id": "synonym-gap-01",
+  "target_role": "Python 后端开发实习",
+  "resume_text": "项目经历：使用 Python 完成后端服务练习，使用异步接口处理请求，完成缓存设计和容器化部署。项目记录包含接口调试、日志排查和服务启动说明，但没有直接使用 Redis 或 Docker 的项目记录。",
+  "jd_text": "岗位职责：参与 Python 后端接口开发、服务维护和问题排查。任职要求：熟悉 Python 和 FastAPI，了解 Redis 缓存，能够使用 Docker 完成容器部署，并能阅读接口文档和完成基础测试。"
+}

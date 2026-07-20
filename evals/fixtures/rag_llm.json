@@ -1,0 +1,6 @@
+{
+  "id": "rag-llm-01",
+  "target_role": "AI 应用开发实习",
+  "resume_text": "专业技能：RAG、LangChain、Prompt、大模型 API。\n项目经历：构建知识库问答应用，使用 RAG 完成文档检索和上下文拼接，使用 LangChain 编排流程，通过大模型 API 生成答案，并编写 Prompt 约束输出格式。",
+  "jd_text": "岗位职责：参与 AI 应用和知识库问答功能开发。任职要求：理解 RAG 检索增强生成，熟悉 LangChain 和 Prompt，能够调用大模型 API。加分项：有问答应用项目经验。"
+}

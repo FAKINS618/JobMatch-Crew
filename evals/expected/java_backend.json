@@ -1,0 +1,15 @@
+{
+  "requirements": [
+    {"skill": "Java", "category": "must", "must_extract": true},
+    {"skill": "Spring Boot", "category": "must", "must_extract": true},
+    {"skill": "MySQL", "category": "must", "must_extract": true},
+    {"skill": "SQL", "category": "must", "must_extract": true},
+    {"skill": "Python", "category": "context", "must_extract": false}
+  ],
+  "evidence": [
+    {"requirement_skill": "Java", "expected_chunk_keywords": ["Java"], "expected_status": "supported"},
+    {"requirement_skill": "Spring Boot", "expected_chunk_keywords": ["Spring Boot"], "expected_status": "supported"},
+    {"requirement_skill": "MySQL", "expected_chunk_keywords": ["MySQL"], "expected_status": "supported"},
+    {"requirement_skill": "SQL", "expected_chunk_keywords": ["MySQL", "SQL"], "expected_status": "supported"}
+  ]
+}

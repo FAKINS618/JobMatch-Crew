@@ -1,9 +1,8 @@
 """JD requirement extraction with a deterministic fallback."""
 
-import re
-
 from pydantic import BaseModel, Field
 
+from app.agent_pipeline.evidence_matching import contains_skill, find_skill_spans
 from app.agent_pipeline.structured_runner import StageOutcome, run_structured
 from app.schemas.agent_pipeline import JDRequirement
 from app.services.market_profile_service import SKILL_KEYWORDS
@@ -22,10 +21,15 @@ def validate_requirement_quotes(requirements: list[JDRequirement], jd_text: str)
         requirement_ids.add(requirement.id)
         if requirement.source_quote not in jd_text:
             raise ValueError(f"岗位要求 {requirement.id} 的 source_quote 不在原始 JD 中")
+        if not contains_skill(requirement.source_quote, requirement.skill):
+            raise ValueError(f"岗位要求 {requirement.id} 的 skill 不在 source_quote 中")
 
 
 def _category(jd_text: str, skill: str) -> str:
-    index = jd_text.casefold().find(skill.casefold())
+    spans = find_skill_spans(jd_text, skill)
+    index = spans[0][0] if spans else -1
+    if index < 0:
+        return "must"
     context = jd_text[max(0, index - 60) : index + len(skill) + 60]
     if any(marker in context for marker in ("加分", "优先", "最好", "nice to have")):
         return "preferred"
@@ -35,11 +39,12 @@ def _category(jd_text: str, skill: str) -> str:
 def rule_extract_requirements(jd_text: str) -> list[JDRequirement]:
     requirements: list[JDRequirement] = []
     for skill in SKILL_KEYWORDS:
-        match = re.search(re.escape(skill), jd_text, flags=re.IGNORECASE)
-        if not match:
+        skill_spans = find_skill_spans(jd_text, skill)
+        if not skill_spans:
             continue
-        quote_start = max(0, match.start() - 35)
-        quote_end = min(len(jd_text), match.end() + 55)
+        start, end = skill_spans[0]
+        quote_start = max(0, start - 35)
+        quote_end = min(len(jd_text), end + 55)
         # Keep the exact source substring so downstream validation is possible.
         quote = jd_text[quote_start:quote_end].strip()
         requirement_id = f"req-{len(requirements) + 1}"

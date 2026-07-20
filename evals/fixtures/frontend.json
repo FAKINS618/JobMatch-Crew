@@ -1,0 +1,6 @@
+{
+  "id": "frontend-01",
+  "target_role": "前端开发实习",
+  "resume_text": "专业技能：Vue、Vue3、TypeScript、JavaScript、HTML、CSS。\n项目经历：使用 Vue3 和 TypeScript 开发任务看板，使用 JavaScript 编写交互逻辑，使用 HTML 和 CSS 完成响应式页面。项目包含表单校验和基础组件封装。",
+  "jd_text": "岗位职责：参与前端页面开发、组件维护和交互优化。任职要求：熟悉 Vue、TypeScript、JavaScript、HTML 和 CSS，能够完成响应式页面。加分项：有 Vue3 项目经验。"
+}

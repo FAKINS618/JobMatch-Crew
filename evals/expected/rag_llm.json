@@ -1,0 +1,14 @@
+{
+  "requirements": [
+    {"skill": "RAG", "category": "must", "must_extract": true},
+    {"skill": "LangChain", "category": "must", "must_extract": true},
+    {"skill": "Prompt", "category": "must", "must_extract": true},
+    {"skill": "大模型 API", "category": "must", "must_extract": true}
+  ],
+  "evidence": [
+    {"requirement_skill": "RAG", "expected_chunk_keywords": ["RAG"], "expected_status": "supported"},
+    {"requirement_skill": "LangChain", "expected_chunk_keywords": ["LangChain"], "expected_status": "supported"},
+    {"requirement_skill": "Prompt", "expected_chunk_keywords": ["Prompt"], "expected_status": "supported"},
+    {"requirement_skill": "大模型 API", "expected_chunk_keywords": ["大模型 API"], "expected_status": "supported"}
+  ]
+}

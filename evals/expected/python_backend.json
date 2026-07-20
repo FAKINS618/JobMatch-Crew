@@ -1,0 +1,15 @@
+{
+  "requirements": [
+    {"skill": "Python", "category": "must", "must_extract": true},
+    {"skill": "FastAPI", "category": "must", "must_extract": true},
+    {"skill": "Redis", "category": "must", "must_extract": true},
+    {"skill": "Docker", "category": "must", "must_extract": true},
+    {"skill": "React", "category": "context", "must_extract": false}
+  ],
+  "evidence": [
+    {"requirement_skill": "Python", "expected_chunk_keywords": ["Python"], "expected_status": "supported"},
+    {"requirement_skill": "FastAPI", "expected_chunk_keywords": ["FastAPI"], "expected_status": "supported"},
+    {"requirement_skill": "Redis", "expected_chunk_keywords": ["Redis"], "expected_status": "supported"},
+    {"requirement_skill": "Docker", "expected_chunk_keywords": ["Docker"], "expected_status": "supported"}
+  ]
+}

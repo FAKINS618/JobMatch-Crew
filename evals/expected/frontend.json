@@ -1,0 +1,18 @@
+{
+  "requirements": [
+    {"skill": "Vue", "category": "must", "must_extract": true},
+    {"skill": "Vue3", "category": "must", "must_extract": true},
+    {"skill": "TypeScript", "category": "must", "must_extract": true},
+    {"skill": "JavaScript", "category": "must", "must_extract": true},
+    {"skill": "HTML", "category": "must", "must_extract": true},
+    {"skill": "CSS", "category": "must", "must_extract": true}
+  ],
+  "evidence": [
+    {"requirement_skill": "Vue", "expected_chunk_keywords": ["Vue"], "expected_status": "supported"},
+    {"requirement_skill": "Vue3", "expected_chunk_keywords": ["Vue3"], "expected_status": "supported"},
+    {"requirement_skill": "TypeScript", "expected_chunk_keywords": ["TypeScript"], "expected_status": "supported"},
+    {"requirement_skill": "JavaScript", "expected_chunk_keywords": ["JavaScript"], "expected_status": "supported"},
+    {"requirement_skill": "HTML", "expected_chunk_keywords": ["HTML"], "expected_status": "supported"},
+    {"requirement_skill": "CSS", "expected_chunk_keywords": ["CSS"], "expected_status": "supported"}
+  ]
+}

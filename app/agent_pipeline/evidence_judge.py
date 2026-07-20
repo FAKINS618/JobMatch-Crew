@@ -1,10 +1,13 @@
 """Resume evidence retrieval and constrained evidence judgement."""
 
 import json
-import re
-
 from pydantic import BaseModel, Field
 
+from app.agent_pipeline.evidence_matching import (
+    contains_skill,
+    has_only_negated_skill_evidence,
+    has_positive_skill_evidence,
+)
 from app.agent_pipeline.retrieval import (
     EvidenceReranker,
     ResumeRetriever,
@@ -57,6 +60,8 @@ def retrieve_candidates(
                     chunk_id=resume_chunk.id,
                     snippet=f"[{resume_chunk.section}] {resume_chunk.content}",
                     lexical_score=candidate.lexical_score,
+                    embedding_score=candidate.embedding_score,
+                    fusion_score=candidate.fusion_score,
                     rerank_score=candidate.rerank_score,
                 )
             )
@@ -83,7 +88,12 @@ def rule_judge(
     decisions: list[EvidenceDecision] = []
     for requirement in requirements:
         items = candidates.get(requirement.id, [])
-        direct = [item for item in items if re.search(re.escape(requirement.skill), item.snippet, re.IGNORECASE)]
+        direct = [
+            item
+            for item in items
+            if has_positive_skill_evidence(item.snippet, requirement.skill)
+        ]
+        negative_only = False
         if direct:
             decisions.append(
                 EvidenceDecision(
@@ -94,17 +104,25 @@ def rule_judge(
                     rationale="简历片段中存在岗位技能的直接证据。",
                 )
             )
-        elif items:
+        else:
+            skill_items = [
+                item for item in items if contains_skill(item.snippet, requirement.skill)
+            ]
+            negative_only = bool(skill_items) and all(
+                has_only_negated_skill_evidence(item.snippet, requirement.skill)
+                for item in skill_items
+            )
+        if not direct and items and not negative_only:
             decisions.append(
                 EvidenceDecision(
                     requirement_id=requirement.id,
                     status="partial",
                     evidence_ids=[items[0].id],
-                    confidence=min(0.84, 0.5 + items[0].rerank_score * 0.5),
+                    confidence=min(0.84, 0.5 + float(items[0].rerank_score or 0) * 0.5),
                     rationale="检索到相关项目语义，但没有直接技能名称证据。",
                 )
             )
-        else:
+        elif not direct:
             decisions.append(
                 EvidenceDecision(
                     requirement_id=requirement.id,

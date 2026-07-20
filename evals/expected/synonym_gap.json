@@ -1,0 +1,14 @@
+{
+  "requirements": [
+    {"skill": "Python", "category": "must", "must_extract": true},
+    {"skill": "FastAPI", "category": "must", "must_extract": true},
+    {"skill": "Redis", "category": "must", "must_extract": true},
+    {"skill": "Docker", "category": "must", "must_extract": true}
+  ],
+  "evidence": [
+    {"requirement_skill": "Python", "expected_chunk_keywords": ["Python"], "expected_status": "supported"},
+    {"requirement_skill": "FastAPI", "expected_chunk_keywords": ["异步接口"], "expected_status": "partial"},
+    {"requirement_skill": "Redis", "expected_chunk_keywords": ["缓存设计"], "expected_status": "partial"},
+    {"requirement_skill": "Docker", "expected_chunk_keywords": ["容器化部署"], "expected_status": "partial"}
+  ]
+}

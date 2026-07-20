@@ -40,6 +40,8 @@ class ResumeChunk(BaseModel):
 class ResumeChunkCandidate(BaseModel):
     chunk: ResumeChunk
     lexical_score: float = Field(ge=0, le=1)
+    embedding_score: float | None = Field(default=None, ge=0, le=1)
+    fusion_score: float | None = Field(default=None, ge=0, le=1)
     rerank_score: float | None = Field(default=None, ge=0, le=1)
 
 
@@ -50,6 +52,7 @@ class EvidenceCandidate(BaseModel):
     snippet: str = Field(min_length=1, max_length=1200)
     lexical_score: float = Field(ge=0, le=1)
     embedding_score: float | None = Field(default=None, ge=0, le=1)
+    fusion_score: float | None = Field(default=None, ge=0, le=1)
     rerank_score: float | None = Field(default=None, ge=0, le=1)
 
 

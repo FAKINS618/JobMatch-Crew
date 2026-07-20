@@ -1,0 +1,6 @@
+{
+  "id": "python-backend-01",
+  "target_role": "Python 后端开发实习",
+  "resume_text": "专业技能：Python、FastAPI、Redis、Docker。\n项目经历：使用 FastAPI 开发任务接口，使用 Redis 实现缓存，使用 Docker 完成服务容器化部署。项目代码包含接口日志和基础测试。候选人通过项目练习掌握后端服务开发。",
+  "jd_text": "岗位职责：参与后端接口开发、服务维护和测试。任职要求：熟悉 Python 和 FastAPI，了解 Redis 缓存，能够使用 Docker 完成部署。加分项：有完整后端项目经验。"
+}

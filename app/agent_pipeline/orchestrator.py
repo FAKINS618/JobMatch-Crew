@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from app.agent_pipeline.evidence_judge import judge_evidence, retrieve_candidates
 from app.agent_pipeline.jd_extractor import extract_requirements
 from app.agent_pipeline.report_writer import write_report
+from app.agent_pipeline.retrieval import ResumeRetriever, build_resume_retriever
 from app.agent_pipeline.scorer import score_requirements
 from app.database import (
     create_analysis_run,
@@ -15,6 +16,7 @@ from app.database import (
     save_requirement_evidence,
     update_analysis_run,
 )
+from app.config import settings
 from app.schemas import JobMatchAnalysis
 from app.schemas.agent_pipeline import AgentStage, EvidenceDecision, JDRequirement, ScoringResult
 
@@ -27,6 +29,8 @@ class PipelineResult:
     requirements: list[JDRequirement]
     decisions: list[EvidenceDecision]
     scoring: ScoringResult
+    retrieval_strategy: str = "tfidf"
+    embedding_available: bool = False
 
 
 def _json(value: object) -> str:
@@ -49,6 +53,7 @@ def run_analysis_pipeline(
     jd_text: str,
     target_role: str,
     use_llm: bool = True,
+    retriever: ResumeRetriever | None = None,
     on_stage: Callable[[AgentStage, int], None] | None = None,
 ) -> PipelineResult:
     run_id = create_analysis_run(turn_id, pipeline_version="m1-evidence-v1")
@@ -101,13 +106,25 @@ def run_analysis_pipeline(
 
         stage(AgentStage.EVIDENCE_RETRIEVED, 30)
         started = time.perf_counter()
-        candidates, resume_chunks = retrieve_candidates(resume_text, requirements)
+        active_retriever = retriever or build_resume_retriever(settings)
+        candidates, resume_chunks = retrieve_candidates(
+            resume_text, requirements, retriever=active_retriever
+        )
+        retrieval_strategy = getattr(active_retriever, "last_strategy", "tfidf")
+        embedding_available = bool(getattr(active_retriever, "embedding_available", False))
+        retrieval_degraded = retrieval_strategy == "tfidf_fallback"
+        degraded = degraded or retrieval_degraded
         save_stage(
             AgentStage.EVIDENCE_RETRIEVED,
-            "validated",
+            "degraded" if retrieval_degraded else "validated",
             started,
             {"requirement_count": len(requirements)},
-            {"chunks": resume_chunks, "candidates": candidates},
+            {
+                "chunks": resume_chunks,
+                "candidates": candidates,
+                "retrieval_strategy": retrieval_strategy,
+                "embedding_available": embedding_available,
+            },
         )
 
         stage(AgentStage.EVIDENCE_JUDGED, 50)
@@ -168,7 +185,16 @@ def run_analysis_pipeline(
             status="degraded" if degraded else "completed",
             current_stage=AgentStage.DEGRADED.value if degraded else AgentStage.VALIDATED.value,
         )
-        return PipelineResult(analysis, run_id, degraded, requirements, decisions, scoring)
+        return PipelineResult(
+            analysis,
+            run_id,
+            degraded,
+            requirements,
+            decisions,
+            scoring,
+            retrieval_strategy,
+            embedding_available,
+        )
     except Exception as exc:
         update_analysis_run(run_id, status="failed", current_stage=AgentStage.FAILED.value, error_message=str(exc))
         if on_stage:
