@@ -12,6 +12,7 @@ import {
   type ResumeProfile,
 } from "@/api/workspace";
 import { useCopilotStore } from "@/stores/copilot";
+import ResumeSuggestionReview from "@/components/ResumeSuggestionReview.vue";
 
 const store = useCopilotStore();
 const expandedResumeId = ref<number | null>(null);
@@ -211,6 +212,14 @@ function artifactText(payload: Record<string, unknown>, key: string): string {
               <article v-for="report in historyByResume[resume.id]?.reports" :key="report.id" class="history-item">
                 <strong>{{ report.target_role }} · {{ report.score ?? "暂不评分" }}</strong>
                 <p>{{ report.report_summary || "暂无结构化摘要" }}</p>
+                <ResumeSuggestionReview
+                  :report-id="report.id"
+                  :source-resume-version-id="resume.id"
+                  :target-role="report.target_role"
+                  :source-raw-text="resume.raw_text"
+                  :source-profile="resume.profile"
+                  @saved="store.loadResumeVersions"
+                />
               </article>
               <h2 v-if="historyByResume[resume.id]?.market_search_triggers.length">自动搜索记录</h2>
               <p v-for="trigger in historyByResume[resume.id]?.market_search_triggers" :key="trigger.id" class="helper-text">

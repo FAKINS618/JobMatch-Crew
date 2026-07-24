@@ -7,6 +7,9 @@ from app.schemas import (
     ResumeParseResponse,
     ResumeVersionCreate,
     ResumeVersionResponse,
+    ResumeSuggestionResponse,
+    ResumeSuggestionUpdate,
+    ResumeVersionFromSuggestionsCreate,
 )
 from app.services.resume_parser_service import parse_resume_to_profile
 from app.database import (
@@ -14,6 +17,9 @@ from app.database import (
     get_resume_analysis_history,
     get_resume_market_search_preference,
     list_resume_versions,
+    list_resume_suggestions,
+    update_resume_suggestion,
+    create_resume_version_from_suggestions,
     update_resume_market_search_preference,
 )
 
@@ -88,3 +94,34 @@ def patch_market_search_preference(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ResumeMarketSearchPreference.model_validate(preference)
+
+@router.get("/suggestions/report/{report_id}", response_model=list[ResumeSuggestionResponse])
+def get_report_resume_suggestions(report_id: int) -> list[ResumeSuggestionResponse]:
+    suggestions = list_resume_suggestions(report_id)
+    if suggestions is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return [ResumeSuggestionResponse.model_validate(item) for item in suggestions]
+
+
+@router.patch("/suggestions/{suggestion_id}", response_model=ResumeSuggestionResponse)
+def patch_resume_suggestion(
+    suggestion_id: int, payload: ResumeSuggestionUpdate
+) -> ResumeSuggestionResponse:
+    try:
+        suggestion = update_resume_suggestion(suggestion_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="简历建议不存在")
+    return ResumeSuggestionResponse.model_validate(suggestion)
+
+
+@router.post("/versions/from-suggestions", response_model=ResumeVersionResponse, status_code=201)
+def create_version_from_suggestions(
+    payload: ResumeVersionFromSuggestionsCreate,
+) -> ResumeVersionResponse:
+    try:
+        version = create_resume_version_from_suggestions(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ResumeVersionResponse.model_validate(version)
