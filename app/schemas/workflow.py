@@ -26,6 +26,17 @@ InterviewPerformance = Literal["strong", "mixed", "needs_work"]
 InterviewResult = Literal["pending", "passed", "failed", "unknown"]
 
 
+class JobPostConfirmationResponse(BaseModel):
+    id: int
+    report_id: int
+    title: str = ""
+    company: str = ""
+    url: str
+    status: str
+    verification_status: str = ""
+    verification_reason: str = ""
+    deadline_at: date | None = None
+
 class JobTargetCreate(BaseModel):
     """从一份市场报告中的已验证岗位创建投递目标。"""
 
@@ -113,6 +124,15 @@ class ActionItemResponse(BaseModel):
     expected_output: str
     due_date: date | None = None
     evidence_count: int = 0
+    source_report_id: int | None = None
+    source_job_target_id: int | None = None
+    source_job_title: str = ""
+    source_interview_review_id: int | None = None
+    source_type: str = "report"
+    source_turn_id: int | None = None
+    archived_at: str | None = None
+    created_at_local: str | None = None
+    updated_at_local: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -230,3 +250,34 @@ class InterviewReviewResponse(BaseModel):
 
 class InterviewActionConfirm(BaseModel):
     skills: list[str] = Field(default_factory=list, max_length=20)
+
+NextActionType = Literal[
+    "resume_suggestions",
+    "resume_version_create",
+    "job_target_apply",
+    "job_target_follow_up",
+    "interview_review",
+    "interview_actions",
+    "analysis_progress",
+    "analysis_retry",
+]
+NextActionEntityType = Literal["report", "resume_version", "job_target", "interview_review", "analysis_task", "analysis_turn"]
+NextActionPriority = Literal["high", "medium", "low"]
+
+
+class NextActionResponse(BaseModel):
+    """只读的下一步任务，不包含原始简历、JD 或内部任务数据。"""
+
+    id: str
+    action_type: NextActionType
+    priority: NextActionPriority
+    title: str
+    description: str
+    entity_type: NextActionEntityType
+    entity_id: int
+    route: str
+    action_label: str
+    due_at: str | None = None
+    due_at_local: str | None = None
+    updated_at: str | None = None
+    updated_at_local: str | None = None
