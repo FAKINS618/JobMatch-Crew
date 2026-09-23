@@ -1,5 +1,3 @@
-import sqlite3
-
 from fastapi import APIRouter, HTTPException
 
 from app import database
@@ -24,7 +22,7 @@ def readiness() -> dict[str, object]:
         "evidence_feedback",
     }
     try:
-        with sqlite3.connect(database.DB_PATH) as conn:
+        with database.connect_db() as conn:
             rows = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
