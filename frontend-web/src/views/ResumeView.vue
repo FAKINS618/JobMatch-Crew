@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import {
   getMarketSearchPreference,
   getResumeAnalysisHistory,
@@ -15,6 +15,7 @@ import { useCopilotStore } from "@/stores/copilot";
 import ResumeSuggestionReview from "@/components/ResumeSuggestionReview.vue";
 
 const store = useCopilotStore();
+const route = useRoute();
 const expandedResumeId = ref<number | null>(null);
 const rawText = ref("");
 const versionName = ref("");
@@ -30,7 +31,13 @@ const preferenceByResume = ref<Record<number, ResumeMarketSearchPreference | und
 const historyLoading = ref<number | null>(null);
 const historyError = ref("");
 
-onMounted(() => store.loadResumeVersions());
+onMounted(async () => {
+  await store.loadResumeVersions();
+  const requestedResumeId = Number(route.query.resume);
+  if (route.query.report && store.resumeVersions.some((resume) => resume.id === requestedResumeId)) {
+    await toggleHistory(requestedResumeId);
+  }
+});
 
 async function parseDraft() {
   isParsing.value = true;
@@ -172,7 +179,7 @@ function artifactText(payload: Record<string, unknown>, key: string): string {
           <button class="secondary" @click="toggleHistory(resume.id)">
             {{ expandedResumeId === resume.id ? "收起详情" : "查看简历与分析历史" }}
           </button>
-          <RouterLink class="link-button" :to="{ path: '/', query: { resume: resume.id } }">用此版本开始分析</RouterLink>
+          <RouterLink class="link-button" :to="{ path: '/copilot', query: { resume: resume.id } }">用此版本开始分析</RouterLink>
         </div>
         <div v-if="expandedResumeId === resume.id" class="resume-detail">
           <section><h2>技能</h2><p>{{ resume.profile.skills.join(" · ") || "未提取" }}</p></section>
