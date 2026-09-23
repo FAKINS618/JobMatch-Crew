@@ -1,8 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.health import router as health_router
 from app.api.job_match import router as job_match_router
@@ -19,7 +20,11 @@ from app.api.copilot import router as copilot_router
 from app.api.system import router as system_router
 from app.config import settings
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -32,7 +37,7 @@ async def lifespan(app: FastAPI):
     init_db()
     recovered = recover_stale_background_tasks(settings.task_stale_after_seconds)
     if any(recovered.values()):
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "Marked stale background work as failed: %s", recovered
         )
     yield
@@ -45,6 +50,20 @@ def create_app() -> FastAPI:
         version="0.5.0",
         lifespan=lifespan,
     )
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        """Log unexpected failures without exposing internal details to clients."""
+        logger.exception(
+            "Unhandled application error method=%s path=%s",
+            request.method,
+            request.url.path,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "服务暂时不可用，请稍后重试"},
+        )
+
     allowed_origins = [
         origin.strip()
         for origin in settings.cors_allowed_origins.split(",")
