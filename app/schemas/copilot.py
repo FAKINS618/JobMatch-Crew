@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.limits import MAX_COPILOT_MESSAGE_CHARS
+
 
 CopilotRole = Literal["user", "assistant"]
 TurnStatus = Literal["pending", "running", "completed", "failed"]
@@ -28,7 +30,7 @@ class CopilotSessionResponse(BaseModel):
 
 
 class CopilotMessageCreate(BaseModel):
-    content: str = Field(min_length=2, max_length=20000)
+    content: str = Field(min_length=2, max_length=MAX_COPILOT_MESSAGE_CHARS)
 
 
 class CopilotMessageResponse(BaseModel):
