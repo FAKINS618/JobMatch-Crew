@@ -1430,13 +1430,16 @@ def _market_trigger_row_to_dict(row: sqlite3.Row) -> dict:
     return _with_display_times(dict(row))
 
 
-def get_resume_market_search_triggers(resume_version_id: int) -> list[dict]:
+def get_resume_market_search_triggers(
+    resume_version_id: int, limit: int = 100
+) -> list[dict]:
+    safe_limit = max(1, min(limit, 200))
     with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT * FROM resume_market_search_triggers "
-            "WHERE resume_version_id = ? ORDER BY created_at DESC, id DESC",
-            (resume_version_id,),
+            "WHERE resume_version_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+            (resume_version_id, safe_limit),
         ).fetchall()
         return [_market_trigger_row_to_dict(row) for row in rows]
 
@@ -1572,8 +1575,19 @@ def get_turn_auto_market_search_context(turn_id: int) -> dict | None:
         }
 
 
-def get_resume_analysis_history(resume_version_id: int) -> dict | None:
+def get_resume_analysis_history(
+    resume_version_id: int,
+    *,
+    session_limit: int = 20,
+    message_limit: int = 100,
+    turn_limit: int = 50,
+    report_limit: int = 100,
+) -> dict | None:
     """聚合单个简历版本的副驾历史和市场触发记录，过滤敏感原文字段。"""
+    safe_session_limit = max(1, min(session_limit, 100))
+    safe_message_limit = max(1, min(message_limit, 200))
+    safe_turn_limit = max(1, min(turn_limit, 100))
+    safe_report_limit = max(1, min(report_limit, 200))
     with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         version = conn.execute(
@@ -1583,18 +1597,23 @@ def get_resume_analysis_history(resume_version_id: int) -> dict | None:
         if version is None:
             return None
         sessions = conn.execute(
-            "SELECT * FROM copilot_sessions WHERE resume_version_id = ? ORDER BY created_at DESC, id DESC",
-            (resume_version_id,),
+            "SELECT * FROM copilot_sessions WHERE resume_version_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (resume_version_id, safe_session_limit),
         ).fetchall()
         session_payloads = []
         for session in sessions:
             messages = conn.execute(
-                "SELECT id, session_id, turn_id, role, content, created_at FROM copilot_messages WHERE session_id = ? ORDER BY id",
-                (session["id"],),
+                "SELECT id, session_id, turn_id, role, content, created_at "
+                "FROM (SELECT id, session_id, turn_id, role, content, created_at "
+                "FROM copilot_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?) "
+                "ORDER BY id",
+                (session["id"], safe_message_limit),
             ).fetchall()
             turns = conn.execute(
-                "SELECT id, session_id, status, stage, progress, report_id, input_type, created_at, updated_at FROM analysis_turns WHERE session_id = ? ORDER BY id DESC",
-                (session["id"],),
+                "SELECT id, session_id, status, stage, progress, report_id, input_type, created_at, updated_at "
+                "FROM analysis_turns WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+                (session["id"], safe_turn_limit),
             ).fetchall()
             turn_payloads = []
             for turn in turns:
@@ -1627,9 +1646,9 @@ def get_resume_analysis_history(resume_version_id: int) -> dict | None:
             """
             SELECT id, target_role, score, parse_status, parsed_result, created_at,
                    (SELECT COUNT(*) FROM job_posts p WHERE p.report_id = reports.id) AS job_post_count
-            FROM reports WHERE resume_version_id = ? ORDER BY created_at DESC, id DESC
+            FROM reports WHERE resume_version_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
             """,
-            (resume_version_id,),
+            (resume_version_id, safe_report_limit),
         ).fetchall()
         report_payloads = []
         for report in reports:
@@ -2179,7 +2198,11 @@ def create_copilot_session(
         return _copilot_session_row_to_dict(row)
 
 
-def get_copilot_session(session_id: int) -> dict | None:
+def get_copilot_session(
+    session_id: int, *, message_limit: int = 100, turn_limit: int = 50
+) -> dict | None:
+    safe_message_limit = max(1, min(message_limit, 200))
+    safe_turn_limit = max(1, min(turn_limit, 100))
     with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
@@ -2189,10 +2212,13 @@ def get_copilot_session(session_id: int) -> dict | None:
             return None
         result = _copilot_session_row_to_dict(row)
         messages = conn.execute(
-            "SELECT * FROM copilot_messages WHERE session_id = ? ORDER BY id", (session_id,)
+            "SELECT * FROM (SELECT * FROM copilot_messages "
+            "WHERE session_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id",
+            (session_id, safe_message_limit),
         ).fetchall()
         turns = conn.execute(
-            "SELECT * FROM analysis_turns WHERE session_id = ? ORDER BY id DESC", (session_id,)
+            "SELECT * FROM analysis_turns WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            (session_id, safe_turn_limit),
         ).fetchall()
         result["messages"] = [_copilot_message_row_to_dict(item) for item in messages]
         result["turns"] = [_turn_row_to_dict(conn, item) for item in turns]
