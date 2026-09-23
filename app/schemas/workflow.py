@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.resume import ResumeProfile
+from app.schemas.limits import MAX_RESUME_TEXT_CHARS, MAX_TARGET_ROLE_CHARS
 
 
 JobTargetStatus = Literal[
@@ -198,8 +199,8 @@ class ResumeVersionFromSuggestionsCreate(BaseModel):
     source_resume_version_id: int = Field(gt=0)
     suggestion_ids: list[int] = Field(default_factory=list, max_length=30)
     version_name: str = Field(min_length=2, max_length=50)
-    target_role: str = Field(default="", max_length=120)
-    raw_text: str = Field(min_length=80)
+    target_role: str = Field(default="", max_length=MAX_TARGET_ROLE_CHARS)
+    raw_text: str = Field(min_length=80, max_length=MAX_RESUME_TEXT_CHARS)
     profile: ResumeProfile
 
 
