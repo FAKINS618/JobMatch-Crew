@@ -56,7 +56,11 @@ def main() -> None:
             try:
                 handle_task(payload)
             except Exception:
-                logger.exception("Queued task failed: %s", payload.get("task_type"))
+                logger.exception(
+                    "Queued task failed task_type=%s message_id=%s",
+                    payload.get("task_type"),
+                    message_id,
+                )
                 continue
             queue.acknowledge(message_id)
 
