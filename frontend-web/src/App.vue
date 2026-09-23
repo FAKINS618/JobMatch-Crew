@@ -7,7 +7,8 @@ import { RouterLink, RouterView } from "vue-router";
     <aside class="side-nav">
       <RouterLink class="brand" to="/">CS JobMate</RouterLink>
       <nav>
-        <RouterLink to="/">AI 副驾</RouterLink>
+        <RouterLink to="/">今日工作台</RouterLink>
+        <RouterLink to="/copilot">AI 副驾</RouterLink>
         <RouterLink to="/resumes">简历中心</RouterLink>
         <RouterLink to="/actions">成长计划</RouterLink>
         <RouterLink to="/pipeline">投递管道</RouterLink>
