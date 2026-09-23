@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import {
   createJobTarget,
+  confirmJobPost,
   createMarketMatchTask,
   getReport,
   getMarketTask,
@@ -25,6 +26,7 @@ const noticeMessage = ref("");
 const resumeVersions = ref<ResumeVersion[]>([]);
 const selectedResumeId = ref<number | null>(null);
 const targetRole = ref("");
+const selectedPriority = ref<"A" | "B" | "C">("B");
 const city = ref("");
 const marketTask = ref<MarketTask | null>(null);
 const route = useRoute();
@@ -54,6 +56,14 @@ function recommendationFor(post: JobPost): { level: "A" | "B" | "C"; matchScore:
     return null;
   }
 }
+
+const isManualMarketReport = computed(() => selectedReport.value?.parse_status === "skipped_insufficient_market_data");
+
+const canAddSelectedPost = computed(() => {
+  const post = selectedPost.value;
+  if (!post || addedPostIds.value.has(post.url) || post.status === "expired") return false;
+  return Boolean(recommendationFor(post) || isManualMarketReport.value);
+});
 
 function statusLabel(post: JobPost): string {
   if (post.status === "active") return "已确认可投";
@@ -151,20 +161,30 @@ async function openReport(reportId: number) {
 }
 
 async function addToPipeline(post: JobPost) {
-  const recommendation = recommendationFor(post);
-  if (!selectedReport.value || !recommendation || post.status !== "active") return;
+  if (!selectedReport.value || !canAddSelectedPost.value) return;
   selectedPostId.value = post.id;
   errorMessage.value = "";
   noticeMessage.value = "";
   try {
-    await createJobTarget({ report_id: selectedReport.value.id, url: post.url, priority: recommendation.level });
+    if (post.status !== "active") {
+      const confirmed = await confirmJobPost(post.id);
+      post.status = confirmed.status;
+      post.verification_status = confirmed.verification_status;
+      post.verification_reason = confirmed.verification_reason;
+    }
+    const recommendation = recommendationFor(post);
+    const priority = recommendation?.level ?? selectedPriority.value;
+    await createJobTarget({
+      report_id: selectedReport.value.id,
+      url: post.url,
+      priority,
+    });
     addedPostIds.value = new Set([...addedPostIds.value, post.url]);
     noticeMessage.value = "已加入投递管道，可继续记录投递进度。";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "加入投递管道失败";
   }
 }
-
 onMounted(loadReports);
 </script>
 
@@ -216,7 +236,17 @@ onMounted(loadReports);
         <header class="artifact-heading"><div><p class="eyebrow">岗位详情</p><h2>{{ selectedPost.title || "未命名岗位" }}</h2><p>{{ selectedPost.company || "公司待确认" }}</p></div><a :href="selectedPost.url" target="_blank" rel="noreferrer">打开原链接</a></header>
         <p>{{ selectedPost.content || "暂无完整岗位描述，请打开原链接核实。" }}</p>
         <p v-if="recommendationFor(selectedPost)?.reason" class="next-question">{{ recommendationFor(selectedPost)?.reason }}</p>
-        <div class="decision-row"><span class="helper-text">{{ statusLabel(selectedPost) }} · {{ selectedPost.verification_reason || "来源信息已保留" }}</span><button :disabled="selectedPost.status !== 'active' || !recommendationFor(selectedPost) || addedPostIds.has(selectedPost.url)" @click="addToPipeline(selectedPost)">{{ addedPostIds.has(selectedPost.url) ? "已在投递管道" : "加入投递管道" }}</button></div>
+        <div class="decision-row">
+          <div>
+            <span class="helper-text">{{ statusLabel(selectedPost) }} · {{ selectedPost.verification_reason || "来源信息已保留" }}</span>
+            <label v-if="isManualMarketReport && !recommendationFor(selectedPost)" class="helper-text">确认后的投递优先级
+              <select v-model="selectedPriority"><option value="A">A 优先</option><option value="B">B 常规</option><option value="C">C 观察</option></select>
+            </label>
+            <p v-if="isManualMarketReport && !recommendationFor(selectedPost)" class="helper-text">这份报告未生成岗位级推荐。打开原链接核实后，选择优先级再加入。</p>
+            <p v-else-if="!recommendationFor(selectedPost)" class="helper-text">该岗位没有经过报告推荐，暂不能加入投递管道。</p>
+          </div>
+          <button :disabled="!canAddSelectedPost" @click="addToPipeline(selectedPost)">{{ addedPostIds.has(selectedPost.url) ? "已在投递管道" : (selectedPost.status !== "active" ? "核实并加入投递管道" : "加入投递管道") }}</button>
+        </div>
       </section>
     </div>
   </div>

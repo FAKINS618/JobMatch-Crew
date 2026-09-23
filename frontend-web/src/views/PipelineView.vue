@@ -11,7 +11,9 @@ import {
   type JobTarget,
   type JobTargetTimeline,
 } from "@/api/workspace";
+import { useRoute } from "vue-router";
 
+const route = useRoute();
 const targets = ref<JobTarget[]>([]);
 const timelineById = ref<Record<number, JobTargetTimeline | undefined>>({});
 const selectedTargetId = ref<number | null>(null);
@@ -50,7 +52,10 @@ async function loadTargets() {
   errorMessage.value = "";
   try {
     targets.value = await listJobTargets();
-    selectedTargetId.value = selectedTargetId.value ?? targets.value[0]?.id ?? null;
+    const requestedTargetId = Number(route.query.target);
+    selectedTargetId.value = targets.value.some((target) => target.id === requestedTargetId)
+      ? requestedTargetId
+      : selectedTargetId.value ?? targets.value[0]?.id ?? null;
     await Promise.all(targets.value.map((target) => loadTimeline(target.id)));
   } catch (error) { errorMessage.value = error instanceof Error ? error.message : "读取投递管道失败"; }
 }
@@ -138,6 +143,7 @@ onMounted(loadTargets);
       </section>
       <section v-if="selectedTarget && selectedTimeline" class="artifact-section pipeline-detail">
         <header class="artifact-heading"><div><p class="eyebrow">投递时间线</p><h2>{{ selectedTarget.title }}</h2><p>{{ selectedTarget.company }} · {{ statusLabels[selectedTarget.status] }}</p></div><a :href="selectedTarget.url" target="_blank" rel="noreferrer">查看岗位</a></header>
+        <p v-if="selectedTarget.deadline_at" class="helper-text">截止日期：{{ selectedTarget.deadline_at }}</p>
         <div class="timeline-list"><article v-for="event in selectedTimeline.events" :key="event.id" class="timeline-item"><time>{{ event.occurred_at }}</time><strong>{{ event.event_type }}</strong><p>{{ event.note || "无补充说明" }}</p></article></div>
         <div class="event-form"><label>补充投递记录<textarea v-model="eventNote" placeholder="例如：通过官网投递，等待笔试通知" /></label><button :disabled="isSaving || !eventNote.trim()" @click="addNote">保存记录</button></div>
         <section v-if="canReview" class="review-section">
