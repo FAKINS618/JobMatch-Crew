@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type { EvidenceChain, EvidenceFeedbackVerdict, EvidenceStatus } from "@/api/copilot";
 
-defineProps<{
-  chain: EvidenceChain | null;
-  loading: boolean;
-  error: string;
-}>();
+const props = defineProps<{ chain: EvidenceChain | null; loading: boolean; error: string; }>();
+
+const isUnavailable = computed(() => props.error.includes("证据链不存在") || props.error.includes("未生成可审阅证据链"));
 
 const emit = defineEmits<{
   review: [payload: {
@@ -83,7 +81,7 @@ function reviewLabel(verdict: EvidenceFeedbackVerdict, correctedStatus: Evidence
       </div>
       <span v-if="loading" class="evidence-loading">正在加载</span>
     </header>
-    <p v-if="error" class="evidence-chain-error">{{ error }}</p>
+    <p v-if="error" :class="isUnavailable ? 'evidence-chain-notice' : 'evidence-chain-error'">{{ isUnavailable ? "该历史分析未生成可审阅证据链。" : error }}</p>
     <p v-else-if="!loading && !chain" class="helper-text">分析完成后显示可核对的证据链。</p>
     <div v-else-if="chain" class="evidence-chain-list">
       <article v-for="item in chain.items" :key="item.requirement.id" class="evidence-chain-item">

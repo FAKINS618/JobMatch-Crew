@@ -23,6 +23,25 @@ from app.schemas.workflow import (
 DB_PATH = settings.database_path
 DISPLAY_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
+SQLITE_TIMEOUT_SECONDS = 30
+SQLITE_BUSY_TIMEOUT_MILLISECONDS = 30_000
+
+
+def connect_db() -> sqlite3.Connection:
+    """Create a consistently configured SQLite connection.
+
+    Foreign keys are a per-connection SQLite setting, so every production
+    connection must enable them explicitly. WAL and a busy timeout reduce
+    contention between API reads and background analysis writes.
+    """
+    connection = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT_SECONDS)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    return connection
+
 
 # 这些字段用于追踪 LLM 输出质量：原始输出、解析结果、解析状态和耗时等。
 REPORT_EXTRA_COLUMNS = {
@@ -55,6 +74,15 @@ TURN_EXTRA_COLUMNS = {
     "progress": "INTEGER NOT NULL DEFAULT 0",
     "parent_turn_id": "INTEGER",
     "input_type": "TEXT NOT NULL DEFAULT 'initial_jd'",
+}
+
+
+ACTION_ITEM_EXTRA_COLUMNS = {
+    "source_type": "TEXT NOT NULL DEFAULT 'report'",
+    "source_turn_id": "INTEGER",
+    "source_job_target_id": "INTEGER",
+    "source_interview_review_id": "INTEGER",
+    "archived_at": "TIMESTAMP",
 }
 
 
@@ -92,7 +120,7 @@ def init_db() -> None:
     reports 表保存最终分析报告；
     job_posts 表保存某次市场匹配分析参考过的岗位样本。
     """
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS reports (
@@ -233,6 +261,11 @@ def init_db() -> None:
                 due_date TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                source_type TEXT NOT NULL DEFAULT 'report',
+                source_turn_id INTEGER,
+                source_job_target_id INTEGER,
+                source_interview_review_id INTEGER,
+                archived_at TIMESTAMP,
                 UNIQUE(report_id, skill, title),
                 FOREIGN KEY (report_id) REFERENCES reports(id),
                 FOREIGN KEY (resume_version_id) REFERENCES resume_versions(id)
@@ -514,6 +547,10 @@ def init_db() -> None:
         _ensure_session_columns(conn)
         _ensure_turn_columns(conn)
         _ensure_requirement_evidence_columns(conn)
+        _ensure_action_item_columns(conn)
+        # 历史报告可能是在 resume_suggestions 表加入前生成的。启动时补齐
+        # 可从结构化报告安全提取的建议，确保工作台和简历页看到同一事实。
+        _backfill_report_suggestions(conn)
         conn.commit()
 
 
@@ -576,6 +613,12 @@ def _ensure_turn_columns(conn: sqlite3.Connection) -> None:
             )
 
 
+def _ensure_action_item_columns(conn: sqlite3.Connection) -> None:
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(action_items)").fetchall()}
+    for column_name, column_type in ACTION_ITEM_EXTRA_COLUMNS.items():
+        if column_name not in existing_columns:
+            conn.execute(f"ALTER TABLE action_items ADD COLUMN {column_name} {column_type}")
+
 def _ensure_requirement_evidence_columns(conn: sqlite3.Connection) -> None:
     """Add pipeline evidence fields to databases created by the first M1 draft."""
     existing_columns = {
@@ -589,7 +632,7 @@ def _ensure_requirement_evidence_columns(conn: sqlite3.Connection) -> None:
 
 
 def create_analysis_run(turn_id: int, pipeline_version: str) -> int:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         cursor = conn.execute(
             "INSERT INTO analysis_runs (turn_id, pipeline_version) VALUES (?, ?)",
             (turn_id, pipeline_version),
@@ -605,7 +648,7 @@ def update_analysis_run(
     current_stage: str,
     error_message: str = "",
 ) -> None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.execute(
             """
             UPDATE analysis_runs
@@ -628,7 +671,7 @@ def save_agent_stage_run(
     retry_count: int = 0,
     latency_ms: int | None = None,
 ) -> int:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         cursor = conn.execute(
             """
             INSERT INTO agent_stage_runs (
@@ -657,7 +700,7 @@ def save_requirement_evidence(
     candidates_json: str,
     decision_json: str | None,
 ) -> int:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         cursor = conn.execute(
             """
             INSERT INTO requirement_evidence (
@@ -671,7 +714,7 @@ def save_requirement_evidence(
 
 
 def list_analysis_runs(turn_id: int) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT * FROM analysis_runs WHERE turn_id = ? ORDER BY id", (turn_id,)
@@ -680,7 +723,7 @@ def list_analysis_runs(turn_id: int) -> list[dict]:
 
 
 def list_agent_stage_runs(run_id: int) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT * FROM agent_stage_runs WHERE analysis_run_id = ? ORDER BY id", (run_id,)
@@ -690,7 +733,7 @@ def list_agent_stage_runs(run_id: int) -> list[dict]:
 
 def get_analysis_evidence_chain(turn_id: int) -> dict | None:
     """Return only structured evidence data for the latest run of a turn."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         run = conn.execute(
             """
@@ -812,7 +855,7 @@ def create_evidence_feedback(
         raise ValueError("missing_evidence 不允许关联 evidence_ids")
     if corrected_status in {"supported", "partial"} and not evidence_ids:
         raise ValueError("supported/partial 修正必须关联至少一条 evidence_id")
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         _get_evidence_run_context(conn, analysis_run_id, turn_id)
         evidence_row = conn.execute(
@@ -876,7 +919,7 @@ def get_latest_evidence_feedback_by_run(
     analysis_run_id: int, turn_id: int | None = None
 ) -> dict[str, dict]:
     """Return the newest review per requirement after validating run ownership."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         run = conn.execute(
             "SELECT turn_id FROM analysis_runs WHERE id = ?", (analysis_run_id,)
@@ -895,7 +938,7 @@ def get_latest_evidence_feedback_by_run(
 
 def get_turn_evidence_feedback_summary(turn_id: int) -> dict[str, dict]:
     """Return reviews for the latest analysis run belonging to this turn."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         run = conn.execute(
             "SELECT id FROM analysis_runs WHERE turn_id = ? ORDER BY id DESC LIMIT 1",
@@ -924,7 +967,7 @@ def save_report(
 
     markdown_report 面向用户展示；raw_result 和 parsed_result 面向调试与后续评测。
     """
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         _ensure_resume_version_exists(conn, resume_version_id)
         cursor = conn.execute(
             """
@@ -959,6 +1002,7 @@ def save_report(
                 resume_version_id,
             ),
         )
+        _ensure_report_suggestions(conn, int(cursor.lastrowid))
         conn.commit()
         return int(cursor.lastrowid)
 
@@ -973,7 +1017,7 @@ def update_report_analysis(
     raw_result: str | None = None,
 ) -> None:
     """将后续 Agent 汇总结果回写到同一份报告，保持报告 ID 和任务关联不变。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.execute(
             """
             UPDATE reports
@@ -983,6 +1027,7 @@ def update_report_analysis(
             """,
             (score, markdown_report, parsed_result, parse_status, raw_result, report_id),
         )
+        _ensure_report_suggestions(conn, report_id)
         conn.commit()
 
 
@@ -994,7 +1039,7 @@ def save_job_posts(report_id: int, posts: list[JobPost]) -> None:
     if not posts:
         return
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.executemany(
             """
             INSERT INTO job_posts (
@@ -1042,7 +1087,7 @@ def save_job_posts(report_id: int, posts: list[JobPost]) -> None:
 
 def list_reports() -> list[dict]:
     """查询历史报告摘要列表，前端列表页不返回简历/JD 大文本。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
@@ -1066,7 +1111,7 @@ def list_reports() -> list[dict]:
 
 def get_report(report_id: int) -> dict | None:
     """查询单个报告详情，包含完整报告和调试字段。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """
@@ -1103,7 +1148,7 @@ def list_job_posts(report_id: int) -> list[dict]:
     前端或调试时可以用它查看：模型分析时到底参考了哪些岗位，
     以及每个岗位的 status 和 freshness_score。
     """
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
@@ -1134,9 +1179,32 @@ def list_job_posts(report_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def confirm_job_post(post_id: int) -> dict | None:
+    """记录用户已打开原链接并确认岗位仍可投递。"""
+    with connect_db() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM job_posts WHERE id = ?", (post_id,)).fetchone()
+        if row is None:
+            return None
+        if row["status"] == "expired":
+            raise ValueError("已过期岗位不能确认有效")
+        if row["status"] != "active":
+            conn.execute(
+                """
+                UPDATE job_posts
+                SET status = 'active', verification_status = 'user_confirmed',
+                    verification_reason = '用户已打开原链接并确认仍可投递'
+                WHERE id = ?
+                """,
+                (post_id,),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM job_posts WHERE id = ?", (post_id,)).fetchone()
+        return dict(row)
+
 def create_analysis_task(task_type: str) -> int:
     """创建异步分析任务，返回 task_id。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         cursor = conn.execute(
             """
             INSERT INTO analysis_tasks (task_type, status, progress)
@@ -1156,7 +1224,7 @@ def update_analysis_task(
     error_message: str | None = None,
 ) -> None:
     """更新任务状态。后台任务执行过程中会调用这个函数。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.execute(
             """
             UPDATE analysis_tasks
@@ -1175,7 +1243,7 @@ def update_analysis_task(
 
 def get_analysis_task(task_id: int) -> dict | None:
     """查询任务详情，供前端轮询。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """
@@ -1191,7 +1259,7 @@ def get_analysis_task(task_id: int) -> dict | None:
 
 def create_resume_version(payload: ResumeVersionCreate) -> dict:
     """保存一份用户确认后的简历版本。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
 
         if payload.resume_id is None:
@@ -1251,7 +1319,7 @@ def create_resume_version(payload: ResumeVersionCreate) -> dict:
 
 def list_resume_versions() -> list[dict]:
     """查询全部简历版本，供前端选择。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
@@ -1268,7 +1336,7 @@ def list_resume_versions() -> list[dict]:
 
 def get_resume_market_search_preference(resume_version_id: int) -> dict | None:
     """读取单个简历版本的岗位自动搜索偏好，默认关闭。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         if conn.execute("SELECT 1 FROM resume_versions WHERE id = ?", (resume_version_id,)).fetchone() is None:
             return None
@@ -1292,7 +1360,7 @@ def get_resume_market_search_preference(resume_version_id: int) -> dict | None:
 def update_resume_market_search_preference(
     resume_version_id: int, *, auto_search_enabled: bool, city: str
 ) -> dict:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         _ensure_resume_version_exists(conn, resume_version_id)
         conn.execute(
@@ -1323,7 +1391,7 @@ def _market_trigger_row_to_dict(row: sqlite3.Row) -> dict:
 
 
 def get_resume_market_search_triggers(resume_version_id: int) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT * FROM resume_market_search_triggers "
@@ -1334,7 +1402,7 @@ def get_resume_market_search_triggers(resume_version_id: int) -> list[dict]:
 
 
 def get_resume_market_search_trigger_by_turn(turn_id: int) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT * FROM resume_market_search_triggers WHERE source_turn_id = ?",
@@ -1354,7 +1422,7 @@ def create_resume_market_search_trigger(
     trigger_mode: str = "auto",
 ) -> dict:
     """创建可审计的自动搜索触发记录，并校验回合与简历版本归属。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         _ensure_resume_version_exists(conn, resume_version_id)
         context = conn.execute(
@@ -1406,7 +1474,7 @@ def create_resume_market_search_trigger(
 def update_resume_market_search_trigger(
     trigger_id: int, *, status: str, report_id: int | None = None, reason: str = ""
 ) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         conn.execute(
             """
@@ -1426,7 +1494,7 @@ def update_resume_market_search_trigger(
 
 def get_turn_auto_market_search_context(turn_id: int) -> dict | None:
     """读取自动搜索资格所需的受控上下文，不返回原始文本。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """
@@ -1466,7 +1534,7 @@ def get_turn_auto_market_search_context(turn_id: int) -> dict | None:
 
 def get_resume_analysis_history(resume_version_id: int) -> dict | None:
     """聚合单个简历版本的副驾历史和市场触发记录，过滤敏感原文字段。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         version = conn.execute(
             "SELECT id, resume_id, version_name, target_role, created_at FROM resume_versions WHERE id = ?",
@@ -1618,7 +1686,7 @@ def _scrub_history_text(value: str) -> str:
 
 def create_job_target(payload: JobTargetCreate) -> dict:
     """从报告中的确认有效岗位创建投递目标，重复创建时返回已有记录。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         post = conn.execute(
             """
@@ -1634,7 +1702,7 @@ def create_job_target(payload: JobTargetCreate) -> dict:
             raise ValueError("仅确认仍可投递的岗位可以加入投递管道")
 
         report = conn.execute(
-            "SELECT parsed_result, resume_version_id FROM reports WHERE id = ?",
+            "SELECT parsed_result, resume_version_id, parse_status FROM reports WHERE id = ?",
             (payload.report_id,),
         ).fetchone()
         if report is None:
@@ -1652,6 +1720,10 @@ def create_job_target(payload: JobTargetCreate) -> dict:
             ),
             None,
         )
+        # 数据不足报告不会伪造 A/B/C 推荐；用户完成岗位链接核实后，
+        # 可以用显式选择的优先级加入投递管道。
+        if recommendation is None and report["parse_status"] == "skipped_insufficient_market_data":
+            recommendation = {"level": payload.priority, "match_score": None}
         if recommendation is None:
             raise ValueError("岗位不在该报告的 A/B/C 推荐列表中")
         if recommendation.get("level") != payload.priority:
@@ -1697,7 +1769,7 @@ def create_job_target(payload: JobTargetCreate) -> dict:
 
 
 def list_job_targets(status: str | None = None) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         query = "SELECT * FROM job_targets"
         params: tuple[str, ...] = ()
@@ -1721,7 +1793,7 @@ _ALLOWED_TARGET_TRANSITIONS = {
 
 
 def update_job_target(target_id: int, payload: JobTargetUpdate) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         current = conn.execute("SELECT * FROM job_targets WHERE id = ?", (target_id,)).fetchone()
         if current is None:
@@ -1770,7 +1842,7 @@ def update_job_target(target_id: int, payload: JobTargetUpdate) -> dict | None:
 
 
 def create_application_event(target_id: int, payload: ApplicationEventCreate) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         if conn.execute("SELECT 1 FROM job_targets WHERE id = ?", (target_id,)).fetchone() is None:
             return None
@@ -1800,17 +1872,33 @@ def _action_item_row_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict
     result["evidence_count"] = conn.execute(
         "SELECT COUNT(*) FROM action_evidence WHERE action_item_id = ?", (row["id"],)
     ).fetchone()[0]
+    result["source_report_id"] = row["report_id"]
+    result["source_type"] = row["source_type"] or "report"
+    result["source_turn_id"] = row["source_turn_id"]
+    result["source_job_target_id"] = row["source_job_target_id"]
+    result["source_interview_review_id"] = row["source_interview_review_id"]
+    target = None
+    if row["source_job_target_id"]:
+        target = conn.execute(
+            "SELECT id, title FROM job_targets WHERE id = ?", (row["source_job_target_id"],)
+        ).fetchone()
+    result["source_job_title"] = target["title"] if target else ""
     return result
 
-
 def create_action_items_from_report(
-    report_id: int, payload: ActionItemsFromReportRequest
+    report_id: int,
+    payload: ActionItemsFromReportRequest,
+    *,
+    source_type: str = "report",
+    source_turn_id: int | None = None,
+    source_job_target_id: int | None = None,
+    source_interview_review_id: int | None = None,
 ) -> list[dict]:
-    """将已校验报告中的技能缺口转为待办；不接受报告外的任意技能。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    """将已校验报告中的技能缺口转为可执行任务，并保留精确来源。"""
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         report = conn.execute(
-            "SELECT parsed_result, resume_version_id FROM reports WHERE id = ?", (report_id,)
+            "SELECT parsed_result, resume_version_id, parse_status FROM reports WHERE id = ?", (report_id,)
         ).fetchone()
         if report is None:
             raise ValueError("报告不存在")
@@ -1822,19 +1910,17 @@ def create_action_items_from_report(
         missing_skills = [skill for skill in missing_skills if isinstance(skill, str) and skill.strip()]
         if not missing_skills:
             raise ValueError("该报告没有可转化的技能缺口")
-
         requested_skills = payload.skills or missing_skills[:5]
         invalid_skills = set(requested_skills) - set(missing_skills)
         if invalid_skills:
             raise ValueError("只能选择当前报告中的技能缺口创建任务")
         resume_version_id = payload.resume_version_id or report["resume_version_id"]
         _ensure_resume_version_exists(conn, resume_version_id)
-
         created_items = []
         for index, skill in enumerate(requested_skills):
             title = f"补强 {skill}"
             existing = conn.execute(
-                "SELECT * FROM action_items WHERE report_id = ? AND skill = ? AND title = ?",
+                "SELECT * FROM action_items WHERE report_id = ? AND skill = ? AND title = ? AND archived_at IS NULL",
                 (report_id, skill, title),
             ).fetchone()
             if existing is not None:
@@ -1843,8 +1929,9 @@ def create_action_items_from_report(
             cursor = conn.execute(
                 """
                 INSERT INTO action_items (
-                    report_id, resume_version_id, action_type, skill, title, priority, expected_output
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    report_id, resume_version_id, action_type, skill, title, priority, expected_output,
+                    source_type, source_turn_id, source_job_target_id, source_interview_review_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report_id,
@@ -1854,6 +1941,10 @@ def create_action_items_from_report(
                     title,
                     "high" if index < 2 else "medium",
                     f"提交一个能够证明 {skill} 能力的项目链接、练习记录或简历版本。",
+                    source_type,
+                    source_turn_id,
+                    source_job_target_id,
+                    source_interview_review_id,
                 ),
             )
             row = conn.execute("SELECT * FROM action_items WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -1862,25 +1953,46 @@ def create_action_items_from_report(
         return created_items
 
 
-def list_action_items(status: str | None = None) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+def list_action_items(
+    status: str | None = None,
+    resume_version_id: int | None = None,
+    report_id: int | None = None,
+    source_type: str | None = None,
+    include_archived: bool = False,
+) -> list[dict]:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
-        query = "SELECT * FROM action_items"
-        params: tuple[str, ...] = ()
+        clauses: list[str] = []
+        params: list[object] = []
+        if not include_archived:
+            clauses.append("archived_at IS NULL")
         if status:
-            query += " WHERE status = ?"
-            params = (status,)
+            clauses.append("status = ?")
+            params.append(status)
+        if resume_version_id:
+            clauses.append("resume_version_id = ?")
+            params.append(resume_version_id)
+        if report_id:
+            clauses.append("report_id = ?")
+            params.append(report_id)
+        if source_type:
+            clauses.append("source_type = ?")
+            params.append(source_type)
+        query = "SELECT * FROM action_items"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, updated_at DESC"
         rows = conn.execute(query, params).fetchall()
         return [_action_item_row_to_dict(conn, row) for row in rows]
 
-
 def update_action_item(item_id: int, payload: ActionItemUpdate) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         current = conn.execute("SELECT * FROM action_items WHERE id = ?", (item_id,)).fetchone()
         if current is None:
             return None
+        if current["archived_at"] is not None:
+            raise ValueError("已归档任务请先恢复")
         new_status = payload.status or current["status"]
         if new_status == "completed":
             evidence_count = conn.execute(
@@ -1904,8 +2016,37 @@ def update_action_item(item_id: int, payload: ActionItemUpdate) -> dict | None:
         return _action_item_row_to_dict(conn, row)
 
 
+def archive_action_item(item_id: int) -> dict | None:
+    with connect_db() as conn:
+        conn.row_factory = sqlite3.Row
+        current = conn.execute("SELECT * FROM action_items WHERE id = ?", (item_id,)).fetchone()
+        if current is None:
+            return None
+        conn.execute(
+            "UPDATE action_items SET status = 'cancelled', archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (item_id,),
+        )
+        row = conn.execute("SELECT * FROM action_items WHERE id = ?", (item_id,)).fetchone()
+        conn.commit()
+        return _action_item_row_to_dict(conn, row)
+
+
+def restore_action_item(item_id: int) -> dict | None:
+    with connect_db() as conn:
+        conn.row_factory = sqlite3.Row
+        current = conn.execute("SELECT * FROM action_items WHERE id = ?", (item_id,)).fetchone()
+        if current is None:
+            return None
+        conn.execute(
+            "UPDATE action_items SET status = 'todo', archived_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (item_id,),
+        )
+        row = conn.execute("SELECT * FROM action_items WHERE id = ?", (item_id,)).fetchone()
+        conn.commit()
+        return _action_item_row_to_dict(conn, row)
+
 def create_action_evidence(item_id: int, payload: ActionEvidenceCreate) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         if conn.execute("SELECT 1 FROM action_items WHERE id = ?", (item_id,)).fetchone() is None:
             return None
@@ -1931,7 +2072,7 @@ def create_action_evidence(item_id: int, payload: ActionEvidenceCreate) -> dict 
 
 def get_dashboard_summary() -> dict:
     """返回只基于用户真实操作数据的个人求职总览。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         target_counts = {
             row["status"]: row["count"]
@@ -1942,7 +2083,7 @@ def get_dashboard_summary() -> dict:
         action_counts = {
             row["status"]: row["count"]
             for row in conn.execute(
-                "SELECT status, COUNT(*) AS count FROM action_items GROUP BY status"
+                "SELECT status, COUNT(*) AS count FROM action_items WHERE archived_at IS NULL GROUP BY status"
             ).fetchall()
         }
         evidence_count = conn.execute("SELECT COUNT(*) FROM action_evidence").fetchone()[0]
@@ -1984,7 +2125,7 @@ def _turn_row_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
 def create_copilot_session(
     resume_version_id: int | None, target_role: str
 ) -> dict:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         _ensure_resume_version_exists(conn, resume_version_id)
         cursor = conn.execute(
@@ -1999,7 +2140,7 @@ def create_copilot_session(
 
 
 def get_copilot_session(session_id: int) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT * FROM copilot_sessions WHERE id = ?", (session_id,)
@@ -2019,7 +2160,7 @@ def get_copilot_session(session_id: int) -> dict | None:
 
 
 def get_copilot_turn(turn_id: int) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM analysis_turns WHERE id = ?", (turn_id,)).fetchone()
         return _turn_row_to_dict(conn, row) if row else None
@@ -2027,7 +2168,7 @@ def get_copilot_turn(turn_id: int) -> dict | None:
 
 def get_copilot_report_source_turn(report_id: int) -> int | None:
     """Return the first analysis turn that produced a report."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         row = conn.execute(
             "SELECT id FROM analysis_turns WHERE report_id = ? ORDER BY id ASC LIMIT 1",
             (report_id,),
@@ -2038,7 +2179,7 @@ def get_copilot_report_source_turn(report_id: int) -> int | None:
 def list_recent_copilot_messages(session_id: int, limit: int = 4) -> list[dict]:
     """Read only a small recent window for follow-up context construction."""
     safe_limit = max(1, min(limit, 8))
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT id, role, content, turn_id, created_at FROM copilot_messages "
@@ -2049,7 +2190,7 @@ def list_recent_copilot_messages(session_id: int, limit: int = 4) -> list[dict]:
 
 
 def create_copilot_message_and_turn(session_id: int, content: str) -> tuple[dict, dict] | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         session = conn.execute(
             "SELECT id, active_report_id FROM copilot_sessions WHERE id = ?", (session_id,)
@@ -2099,7 +2240,7 @@ def create_copilot_message_and_turn(session_id: int, content: str) -> tuple[dict
 
 def get_turn_context(turn_id: int) -> dict | None:
     """读取运行 Agent 所需的受控上下文，避免服务层自行拼 SQL。"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         turn = conn.execute("SELECT * FROM analysis_turns WHERE id = ?", (turn_id,)).fetchone()
         if turn is None:
@@ -2138,7 +2279,7 @@ def update_copilot_turn(
     error_message: str = "",
     report_id: int | None = None,
 ) -> None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.execute(
             """
             UPDATE analysis_turns
@@ -2160,7 +2301,7 @@ def update_copilot_turn(
 def save_copilot_artifact(
     turn_id: int, artifact_type: str, payload: dict, status: str = "ready"
 ) -> dict:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.execute(
             """
@@ -2179,7 +2320,7 @@ def save_copilot_artifact(
 def update_copilot_artifact(
     artifact_id: int, payload: dict, status: str = "ready"
 ) -> None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.execute(
             "UPDATE analysis_artifacts SET payload_json = ?, status = ? WHERE id = ?",
             (json.dumps(payload, ensure_ascii=False), status, artifact_id),
@@ -2188,7 +2329,7 @@ def update_copilot_artifact(
 
 
 def save_copilot_assistant_message(session_id: int, turn_id: int, content: str) -> dict:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.execute(
             """
@@ -2209,7 +2350,7 @@ def save_copilot_assistant_message(session_id: int, turn_id: int, content: str) 
 
 
 def create_artifact_decision(artifact_id: int, decision: str, note: str) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         if conn.execute(
             "SELECT 1 FROM analysis_artifacts WHERE id = ?", (artifact_id,)
@@ -2231,7 +2372,16 @@ def _suggestion_row_to_dict(row: sqlite3.Row) -> dict:
     return _with_display_times(dict(row))
 
 
+def _backfill_report_suggestions(conn: sqlite3.Connection) -> None:
+    """为旧报告补齐可由结构化结果确定的简历建议。"""
+    report_ids = conn.execute(
+        "SELECT id FROM reports WHERE resume_version_id IS NOT NULL"
+    ).fetchall()
+    for row in report_ids:
+        _ensure_report_suggestions(conn, int(row[0]))
+
 def _ensure_report_suggestions(conn: sqlite3.Connection, report_id: int) -> None:
+    conn.row_factory = sqlite3.Row
     report = conn.execute(
         "SELECT resume_version_id, parsed_result FROM reports WHERE id = ?", (report_id,)
     ).fetchone()
@@ -2270,7 +2420,7 @@ def _ensure_report_suggestions(conn: sqlite3.Connection, report_id: int) -> None
 
 
 def list_resume_suggestions(report_id: int) -> list[dict] | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         if conn.execute("SELECT 1 FROM reports WHERE id = ?", (report_id,)).fetchone() is None:
             return None
@@ -2285,7 +2435,7 @@ def list_resume_suggestions(report_id: int) -> list[dict] | None:
 def update_resume_suggestion(
     suggestion_id: int, payload: ResumeSuggestionUpdate
 ) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         current = conn.execute(
             "SELECT * FROM resume_suggestions WHERE id = ?", (suggestion_id,)
@@ -2319,7 +2469,7 @@ def update_resume_suggestion(
 def create_resume_version_from_suggestions(
     payload: ResumeVersionFromSuggestionsCreate,
 ) -> dict:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         report = conn.execute(
             "SELECT resume_version_id FROM reports WHERE id = ?", (payload.report_id,)
@@ -2387,7 +2537,7 @@ def _review_target(conn: sqlite3.Connection, job_target_id: int) -> sqlite3.Row 
 
 
 def create_interview_review(job_target_id: int, payload: InterviewReviewCreate) -> dict:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         target = _review_target(conn, job_target_id)
         if target is None:
@@ -2416,7 +2566,7 @@ def create_interview_review(job_target_id: int, payload: InterviewReviewCreate) 
 
 
 def list_interview_reviews(job_target_id: int) -> list[dict] | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         if _review_target(conn, job_target_id) is None:
             return None
@@ -2428,7 +2578,7 @@ def list_interview_reviews(job_target_id: int) -> list[dict] | None:
 
 
 def update_interview_review(review_id: int, payload: InterviewReviewUpdate) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         current = conn.execute("SELECT * FROM interview_reviews WHERE id = ?", (review_id,)).fetchone()
         if current is None:
@@ -2460,7 +2610,7 @@ def update_interview_review(review_id: int, payload: InterviewReviewUpdate) -> d
 
 
 def confirm_interview_actions(review_id: int, skills: list[str]) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         review = conn.execute("SELECT * FROM interview_reviews WHERE id = ?", (review_id,)).fetchone()
         if review is None:
@@ -2479,16 +2629,20 @@ def confirm_interview_actions(review_id: int, skills: list[str]) -> list[dict]:
         if target is None:
             raise ValueError("投递目标不存在")
     items = create_action_items_from_report(
-        int(target["report_id"]), ActionItemsFromReportRequest(skills=chosen)
+        int(target["report_id"]),
+        ActionItemsFromReportRequest(skills=chosen),
+        source_type="interview_review",
+        source_job_target_id=int(review["job_target_id"]),
+        source_interview_review_id=review_id,
     )
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.execute("UPDATE interview_reviews SET actions_confirmed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (review_id,))
         conn.commit()
     return items
 
 
 def get_job_target_timeline(job_target_id: int) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         target = conn.execute("SELECT * FROM job_targets WHERE id = ?", (job_target_id,)).fetchone()
         if target is None:
