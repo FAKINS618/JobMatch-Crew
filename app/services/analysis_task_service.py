@@ -14,13 +14,13 @@ def run_market_match_task(task_id: int, payload: MarketMatchRequest) -> None:
 
     try:
         result = generate_market_match_report(payload)
-    except Exception as exc:
+    except Exception:
         logger.exception("Market match async task failed")
         update_analysis_task(
             task_id,
             status="failed",
             progress=100,
-            error_message=str(exc),
+            error_message="岗位市场分析失败，请稍后重试。",
         )
         return
 
@@ -40,9 +40,14 @@ def run_auto_market_match_task(
     update_analysis_task(task_id, status="running", progress=10)
     try:
         result = generate_market_match_report(payload)
-    except Exception as exc:
+    except Exception:
         logger.exception("Automatic market match task failed")
-        update_analysis_task(task_id, status="failed", progress=100, error_message=str(exc))
+        update_analysis_task(
+            task_id,
+            status="failed",
+            progress=100,
+            error_message="岗位市场分析失败，请稍后重试。",
+        )
         update_resume_market_search_trigger(
             trigger_id, status="failed", reason="岗位搜索失败，请在岗位收件箱中重试。"
         )
