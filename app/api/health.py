@@ -1,9 +1,12 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from app import database
 
 
 router = APIRouter(tags=["Health"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
@@ -31,5 +34,6 @@ def readiness() -> dict[str, object]:
             raise RuntimeError("required schema is incomplete")
     except Exception as error:
         # Keep the diagnostic private; callers only need the readiness state.
+        logger.exception("Readiness check failed")
         raise HTTPException(status_code=503, detail="数据库尚未就绪") from error
     return {"status": "ready", "database_ready": True}
