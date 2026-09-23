@@ -100,6 +100,10 @@ def run_structured(
     try:
         raw = _call_agent(prompt, expected_output)
     except Exception as error:
+        logger.exception(
+            "Structured stage agent call failed output_model=%s",
+            output_model.__name__,
+        )
         return StageOutcome(value=None, validation_error=_error_summary(error), degraded=True)
     parsed = extract_json_block(raw)
     try:
@@ -123,6 +127,10 @@ def run_structured(
         try:
             repaired = _call_agent(repair_prompt, expected_output)
         except Exception as error:
+            logger.exception(
+                "Structured stage repair call failed output_model=%s",
+                output_model.__name__,
+            )
             return StageOutcome(
                 value=None,
                 retry_count=1,
@@ -139,6 +147,11 @@ def run_structured(
                 cache.set_json(cache_key, {"value": value.model_dump(mode="json")}, cache_ttl_seconds)
             return StageOutcome(value=value, retry_count=1)
         except Exception as second_error:
+            logger.warning(
+                "Structured stage repair validation failed output_model=%s error=%s",
+                output_model.__name__,
+                _error_summary(second_error),
+            )
             return StageOutcome(
                 value=None,
                 retry_count=1,
