@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from app.schemas import (
     ResumeAnalysisHistoryResponse,
     ResumeMarketSearchPreference,
@@ -60,8 +60,20 @@ def get_resume_versions() -> list[ResumeVersionResponse]:
     "/versions/{resume_version_id}/history",
     response_model=ResumeAnalysisHistoryResponse,
 )
-def get_resume_history(resume_version_id: int) -> ResumeAnalysisHistoryResponse:
-    history = get_resume_analysis_history(resume_version_id)
+def get_resume_history(
+    resume_version_id: int,
+    session_limit: int = Query(default=20, ge=1, le=100),
+    message_limit: int = Query(default=100, ge=1, le=200),
+    turn_limit: int = Query(default=50, ge=1, le=100),
+    report_limit: int = Query(default=100, ge=1, le=200),
+) -> ResumeAnalysisHistoryResponse:
+    history = get_resume_analysis_history(
+        resume_version_id,
+        session_limit=session_limit,
+        message_limit=message_limit,
+        turn_limit=turn_limit,
+        report_limit=report_limit,
+    )
     if history is None:
         raise HTTPException(status_code=404, detail="简历版本不存在")
     return ResumeAnalysisHistoryResponse.model_validate(history)
