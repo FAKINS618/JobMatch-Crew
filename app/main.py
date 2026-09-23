@@ -10,7 +10,7 @@ from app.api.job_search import router as job_search_router
 from app.api.reports import router as reports_router
 from app.api.roles import router as roles_router
 from app.api.resumes import router as resumes_router
-from app.database import init_db
+from app.database import init_db, recover_stale_background_tasks
 from app.api.analysis_tasks import router as analysis_tasks_router
 from app.api.action_items import router as action_items_router
 from app.api.dashboard import router as dashboard_router
@@ -30,6 +30,11 @@ async def lifespan(app: FastAPI):
     后续如果接入向量库、任务队列、连接池，也可以统一放在这里。
     """
     init_db()
+    recovered = recover_stale_background_tasks(settings.task_stale_after_seconds)
+    if any(recovered.values()):
+        logging.getLogger(__name__).warning(
+            "Marked stale background work as failed: %s", recovered
+        )
     yield
 
 
