@@ -1,15 +1,21 @@
 from pydantic import BaseModel, Field, field_validator
 from app.schemas.analysis import JobMatchAnalysis
 from app.schemas.analysis import JobMarketProfile, MarketResumeMatchAnalysis
+from app.schemas.limits import (
+    MAX_CITY_CHARS,
+    MAX_JD_TEXT_CHARS,
+    MAX_RESUME_TEXT_CHARS,
+    MAX_SEARCH_KEYWORD_CHARS,
+    MAX_TARGET_ROLE_CHARS,
+)
 
 # 定义接口请求和响应
 
 # 表示 /api/job-match 的请求体必须包含简历、JD 和目标岗位
 class JobMatchRequest(BaseModel):
-    resume_text: str = Field(..., min_length=80, description="候选人简历文本")
-    jd_text: str = Field(..., min_length=80, description="岗位 JD 文本")
-    target_role: str = Field(default="计算机相关岗位")
-    resume_version_id: int | None = Field(default=None, gt=0)
+    resume_text: str = Field(..., min_length=80, max_length=MAX_RESUME_TEXT_CHARS, description="候选人简历文本")
+    jd_text: str = Field(..., min_length=80, max_length=MAX_JD_TEXT_CHARS, description="岗位 JD 文本")
+    target_role: str = Field(default="计算机相关岗位", max_length=MAX_TARGET_ROLE_CHARS)
     resume_version_id: int | None = Field(default=None, gt=0)
 
     # 当创建 JobMatchRequest 对象时，要对 resume_text 和 jd_text 这两个字段执行这个校验函数
@@ -50,8 +56,8 @@ class JobMatchResponse(BaseModel):
 
 
 class JobSearchRequest(BaseModel):
-    keyword: str = Field(..., min_length=2, description="岗位关键词")
-    city: str = Field(default="", description="城市")
+    keyword: str = Field(..., min_length=2, max_length=MAX_SEARCH_KEYWORD_CHARS, description="岗位关键词")
+    city: str = Field(default="", max_length=MAX_CITY_CHARS, description="城市")
     max_results: int = Field(default=5, ge=1, le=10)
 
 
@@ -67,11 +73,10 @@ class JobSearchResponse(BaseModel):
 
 
 class MarketMatchRequest(BaseModel):
-    resume_text: str = Field(..., min_length=80, description="候选人简历文本")
-    target_role: str = Field(..., min_length=2, description="目标方向")
-    city: str = Field(default="", description="城市")
+    resume_text: str = Field(..., min_length=80, max_length=MAX_RESUME_TEXT_CHARS, description="候选人简历文本")
+    target_role: str = Field(..., min_length=2, max_length=MAX_TARGET_ROLE_CHARS, description="目标方向")
+    city: str = Field(default="", max_length=MAX_CITY_CHARS, description="城市")
     max_results: int = Field(default=8, ge=3, le=15)
-    resume_version_id: int | None = Field(default=None, gt=0)
     resume_version_id: int | None = Field(default=None, gt=0)
 
 
