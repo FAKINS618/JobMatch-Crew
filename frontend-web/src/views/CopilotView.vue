@@ -41,6 +41,11 @@ const stageLabel = computed(() => {
 });
 
 onMounted(async () => {
+  const requestedTurnId = Number(route.query.turn);
+  if (requestedTurnId > 0) {
+    await store.openTurn(requestedTurnId);
+    return;
+  }
   await store.loadResumeVersions();
   const requestedResumeId = Number(route.query.resume);
   if (store.resumeVersions.some((resume) => resume.id === requestedResumeId)) {

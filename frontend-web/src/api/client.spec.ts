@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiFetch, resolveApiUrl } from "./client";
 import { submitEvidenceFeedback } from "./copilot";
-import { createInterviewReview, getJobTargetTimeline, updateResumeSuggestion } from "./workspace";
+import { confirmJobPost, createInterviewReview, getJobTargetTimeline, updateResumeSuggestion } from "./workspace";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -93,6 +93,12 @@ describe("application loop API", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/resumes/suggestions/8", expect.objectContaining({ method: "PATCH" }));
   });
 
+  it("confirms an unknown market post before pipeline use", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 9, status: "active" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(confirmJobPost(9)).resolves.toMatchObject({ id: 9, status: "active" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/reports/posts/9/confirm", expect.objectContaining({ method: "POST" }));
+  });
   it("submits a structured interview review", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 2, round_number: 1 }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);

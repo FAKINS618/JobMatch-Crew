@@ -52,6 +52,23 @@ export const useCopilotStore = defineStore("copilot", () => {
     }
   }
 
+  async function openTurn(turnId: number) {
+    isLoading.value = true;
+    errorMessage.value = "";
+    try {
+      await loadResumeVersions();
+      const turn = await getTurn(turnId);
+      activeTurn.value = turn;
+      session.value = await getSession(turn.session_id);
+      evidenceChain.value = null;
+      evidenceError.value = "";
+      if (turn.status === "completed") void loadEvidence(turn.id);
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : "无法打开岗位分析";
+    } finally {
+      isLoading.value = false;
+    }
+  }
   async function submit(content: string) {
     if (!session.value || !content.trim()) return;
     isLoading.value = true;
@@ -160,6 +177,7 @@ export const useCopilotStore = defineStore("copilot", () => {
     evidenceError,
     loadResumeVersions,
     loadEvidence,
+    openTurn,
     reviewEvidence,
     startSession,
     submit,
