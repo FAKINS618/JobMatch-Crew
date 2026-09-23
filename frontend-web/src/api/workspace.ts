@@ -6,12 +6,22 @@ export type ResumeProfile = ResumeVersion["profile"];
 export interface ActionItem {
   id: number;
   report_id: number;
+  resume_version_id: number | null;
   skill: string;
   title: string;
   priority: "high" | "medium" | "low";
   status: "todo" | "in_progress" | "completed" | "cancelled";
   expected_output: string;
   evidence_count: number;
+  source_report_id: number | null;
+  source_job_target_id: number | null;
+  source_job_title: string;
+  source_interview_review_id: number | null;
+  source_type: "report" | "interview_review";
+  source_turn_id: number | null;
+  archived_at: string | null;
+  created_at_local: string | null;
+  updated_at_local: string | null;
 }
 
 export interface JobTarget {
@@ -191,6 +201,12 @@ export function getReport(reportId: number) {
   return apiFetch<ReportDetail>(`/api/reports/${reportId}`);
 }
 
+export function confirmJobPost(postId: number) {
+  return apiFetch<Pick<JobPost, "id" | "report_id" | "status" | "verification_status" | "verification_reason">>(`/api/reports/posts/${postId}/confirm`, {
+    method: "POST",
+  });
+}
+
 export function createJobTarget(payload: { report_id: number; url: string; priority: "A" | "B" | "C" }) {
   return apiFetch<JobTarget>("/api/job-targets", {
     method: "POST",
@@ -236,8 +252,9 @@ export function createActionItemsFromReport(reportId: number, skills: string[]) 
   });
 }
 
-export function listActionItems() {
-  return apiFetch<ActionItem[]>("/api/action-items");
+export function listActionItems(params: { includeArchived?: boolean } = {}) {
+  const query = params.includeArchived ? "?include_archived=true" : "";
+  return apiFetch<ActionItem[]>(`/api/action-items${query}`);
 }
 
 export function updateActionItem(itemId: number, status: ActionItem["status"]) {
@@ -247,6 +264,13 @@ export function updateActionItem(itemId: number, status: ActionItem["status"]) {
   });
 }
 
+export function archiveActionItem(itemId: number) {
+  return apiFetch<ActionItem>(`/api/action-items/${itemId}`, { method: "DELETE" });
+}
+
+export function restoreActionItem(itemId: number) {
+  return apiFetch<ActionItem>(`/api/action-items/${itemId}/restore`, { method: "POST" });
+}
 export function createActionEvidence(itemId: number, content: string, url: string) {
   return apiFetch(`/api/action-items/${itemId}/evidence`, {
     method: "POST",
@@ -391,4 +415,34 @@ export function createResumeVersionFromSuggestions(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export type NextActionType =
+  | "resume_suggestions"
+  | "resume_version_create"
+  | "job_target_apply"
+  | "job_target_follow_up"
+  | "interview_review"
+  | "interview_actions"
+  | "analysis_progress"
+  | "analysis_retry";
+
+export interface NextAction {
+  id: string;
+  action_type: NextActionType;
+  priority: "high" | "medium" | "low";
+  title: string;
+  description: string;
+  entity_type: "report" | "resume_version" | "job_target" | "interview_review" | "analysis_task" | "analysis_turn";
+  entity_id: number;
+  route: string;
+  action_label: string;
+  due_at: string | null;
+  due_at_local?: string | null;
+  updated_at: string | null;
+  updated_at_local?: string | null;
+}
+
+export function getNextActions() {
+  return apiFetch<NextAction[]>("/api/dashboard/next-actions");
 }
