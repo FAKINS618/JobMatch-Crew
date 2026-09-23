@@ -2,6 +2,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.limits import MAX_RESUME_TEXT_CHARS, MAX_TARGET_ROLE_CHARS
+
 
 class ResumeProject(BaseModel):
     name: str
@@ -25,7 +27,7 @@ class ResumeProfile(BaseModel):
 class ResumeParseRequest(BaseModel):
     """调用简历解析接口时的原始输入。"""
 
-    raw_text: str = Field(..., min_length=80, description="候选人简历文本")
+    raw_text: str = Field(..., min_length=80, max_length=MAX_RESUME_TEXT_CHARS, description="候选人简历文本")
 
 
 class ResumeParseResponse(BaseModel):
@@ -37,8 +39,8 @@ class ResumeParseResponse(BaseModel):
 class ResumeVersionCreate(BaseModel):
     resume_id: int | None = None
     version_name: str = Field(min_length=2, max_length=50)
-    target_role: str = ""
-    raw_text: str = Field(min_length=80)
+    target_role: str = Field(default="", max_length=MAX_TARGET_ROLE_CHARS)
+    raw_text: str = Field(min_length=80, max_length=MAX_RESUME_TEXT_CHARS)
     profile: ResumeProfile
 
 
