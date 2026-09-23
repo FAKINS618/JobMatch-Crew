@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     cache_fail_open: bool = True
     redis_socket_connect_timeout_seconds: float = 0.2
     redis_socket_timeout_seconds: float = 0.8
+    task_queue_enabled: bool = False
+    task_queue_name: str = "jm:tasks"
+    task_queue_group: str = "jm:workers"
+    task_queue_visibility_timeout_seconds: int = 900
 
     model_config = SettingsConfigDict(
         env_file=".env",
