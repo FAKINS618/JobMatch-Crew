@@ -1,7 +1,7 @@
 import sqlite3
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.config import settings
@@ -552,6 +552,46 @@ def init_db() -> None:
         # 可从结构化报告安全提取的建议，确保工作台和简历页看到同一事实。
         _backfill_report_suggestions(conn)
         conn.commit()
+
+
+def recover_stale_background_tasks(stale_after_seconds: int) -> dict[str, int]:
+    """Mark abandoned in-process background work as failed after a restart.
+
+    FastAPI BackgroundTasks are not durable. Persisted rows must not remain in
+    a misleading pending/running state when the process that owned the work is
+    gone. The next queue implementation can replace this with re-enqueueing.
+    """
+    threshold = max(60, int(stale_after_seconds))
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=threshold)
+    cutoff_text = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+    task_error = "服务重启或任务超时，后台分析未完成，请重新发起。"
+    turn_error = "服务重启或分析超时，本次分析未完成，请重新发起。"
+
+    with connect_db() as conn:
+        task_cursor = conn.execute(
+            """
+            UPDATE analysis_tasks
+            SET status = 'failed', progress = 100,
+                error_message = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('pending', 'running') AND updated_at < ?
+            """,
+            (task_error, cutoff_text),
+        )
+        turn_cursor = conn.execute(
+            """
+            UPDATE analysis_turns
+            SET status = 'failed', progress = 100,
+                stage = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('pending', 'running') AND updated_at < ?
+            """,
+            (turn_error, cutoff_text),
+        )
+        conn.commit()
+
+    return {
+        "analysis_tasks": task_cursor.rowcount,
+        "analysis_turns": turn_cursor.rowcount,
+    }
 
 
 def _ensure_resume_version_columns(conn: sqlite3.Connection) -> None:
