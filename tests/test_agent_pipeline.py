@@ -198,6 +198,8 @@ def test_rule_reranker_has_stable_chunk_id_tiebreaker():
 
 
 def test_report_writer_ignores_factual_fields_from_llm(monkeypatch):
+    # This test asserts the repair path; keep a user .env cache from reusing prior output.
+    monkeypatch.setattr(settings, "cache_enabled", False);
     requirement = _requirement()
     candidate = EvidenceCandidate(
         id="evidence-1",

@@ -148,3 +148,17 @@ progress { accent-color: #0f766e; height: 8px; width: 100%; }
 .review-card { border-top: 1px solid #e5edf5; display: grid; gap: 8px; padding: 14px 0; }
 .review-card p { margin: 0; }
 @media (max-width: 860px) { .pipeline-layout { grid-template-columns: 1fr; } }
+
+.evidence-chain-notice { background: #f0f4f8; border-left: 3px solid #829ab1; color: #486581; padding: 10px 12px; }
+
+.workspace-heading { align-items: center; }
+.next-action-list { display: grid; gap: 12px; }
+.next-action-row { align-items: center; background: #ffffff; border: 1px solid #d9e2ec; display: flex; gap: 20px; justify-content: space-between; padding: 18px 20px; }
+.next-action-content { flex: 1; min-width: 0; }
+.next-action-content h2 { margin-bottom: 6px; }
+.next-action-content p { margin: 0; }
+.next-action-content time { color: #9b2c2c; font-size: 13px; white-space: nowrap; }
+.primary-action { flex-shrink: 0; }
+.action-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+@media (max-width: 720px) { .next-action-row { align-items: stretch; flex-direction: column; } .primary-action { align-self: flex-start; } }
+.source-links { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }
