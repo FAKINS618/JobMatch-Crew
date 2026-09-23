@@ -5,7 +5,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.database import (
@@ -22,6 +22,9 @@ from app.database import (
     get_resume_market_search_trigger_by_turn,
     get_turn_auto_market_search_context,
     create_resume_market_search_trigger,
+    update_copilot_turn,
+    update_analysis_task,
+    update_resume_market_search_trigger,
 )
 from app.schemas import (
     AnalysisTurnResponse,
@@ -43,6 +46,7 @@ from app.config import settings
 from app.services.copilot_service import run_copilot_turn
 from app.services.copilot_context_service import invalidate_report_context
 from app.services.analysis_task_service import run_auto_market_match_task
+from app.task_queue import TaskQueueUnavailable, dispatch_task
 
 
 router = APIRouter(prefix="/api/v1/copilot", tags=["Copilot"])
@@ -58,8 +62,14 @@ def create_session(payload: CopilotSessionCreate) -> CopilotSessionResponse:
 
 
 @router.get("/sessions/{session_id}", response_model=CopilotSessionDetailResponse)
-def get_session(session_id: int) -> CopilotSessionDetailResponse:
-    session = get_copilot_session(session_id)
+def get_session(
+    session_id: int,
+    message_limit: int = Query(default=100, ge=1, le=200),
+    turn_limit: int = Query(default=50, ge=1, le=100),
+) -> CopilotSessionDetailResponse:
+    session = get_copilot_session(
+        session_id, message_limit=message_limit, turn_limit=turn_limit
+    )
     if session is None:
         raise HTTPException(status_code=404, detail="副驾会话不存在")
     return CopilotSessionDetailResponse.model_validate(session)
@@ -79,7 +89,23 @@ def send_message(
     if created is None:
         raise HTTPException(status_code=404, detail="副驾会话不存在")
     _, turn = created
-    background_tasks.add_task(run_copilot_turn, int(turn["id"]))
+    try:
+        dispatch_task(
+            background_tasks,
+            task_type="copilot_turn",
+            payload={"turn_id": int(turn["id"])},
+            local_runner=run_copilot_turn,
+            local_args=(int(turn["id"]),),
+        )
+    except TaskQueueUnavailable as exc:
+        update_copilot_turn(
+            int(turn["id"]),
+            status="failed",
+            stage="failed",
+            progress=100,
+            error_message="任务队列暂不可用，请稍后重试。",
+        )
+        raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
     return AnalysisTurnResponse.model_validate(turn)
 
 
@@ -209,7 +235,31 @@ def trigger_market_search(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    background_tasks.add_task(run_auto_market_match_task, task_id, payload, int(trigger["id"]))
+    try:
+        dispatch_task(
+            background_tasks,
+            task_type="auto_market_match",
+            payload={
+                "task_id": task_id,
+                "trigger_id": int(trigger["id"]),
+                "request": payload.model_dump(mode="json"),
+            },
+            local_runner=run_auto_market_match_task,
+            local_args=(task_id, payload, int(trigger["id"])),
+        )
+    except TaskQueueUnavailable as exc:
+        update_analysis_task(
+            task_id,
+            status="failed",
+            progress=100,
+            error_message="任务队列暂不可用，请稍后重试。",
+        )
+        update_resume_market_search_trigger(
+            int(trigger["id"]),
+            status="failed",
+            reason="任务队列暂不可用，请稍后重试。",
+        )
+        raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
     return AutoMarketSearchResponse.model_validate(
         {"trigger": trigger, "task_status": "pending", "reused": False}
     )
