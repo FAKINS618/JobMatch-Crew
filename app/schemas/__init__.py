@@ -36,6 +36,7 @@ from app.schemas.resume import (
     ResumeMarketSearchTrigger,
     ResumeAnalysisHistoryResponse,
     AutoMarketSearchResponse,
+    ResumeVersionDiffResponse,
 )
 from app.schemas.workflow import (
     ActionEvidenceCreate,
@@ -105,6 +106,7 @@ __all__ = [
     "ResumeMarketSearchTrigger",
     "ResumeAnalysisHistoryResponse",
     "AutoMarketSearchResponse",
+    "ResumeVersionDiffResponse",
     "ActionEvidenceCreate",
     "ActionEvidenceResponse",
     "ActionItemResponse",
