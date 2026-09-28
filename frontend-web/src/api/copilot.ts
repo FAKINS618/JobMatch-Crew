@@ -6,6 +6,7 @@ export type TurnInputType = "initial_jd" | "follow_up";
 
 export interface ResumeVersion {
   id: number;
+  resume_id?: number;
   version_name: string;
   target_role: string;
   raw_text: string;
@@ -26,6 +27,8 @@ export interface ResumeVersion {
     parse_notes: string[];
   };
   created_at: string | null;
+  parent_resume_version_id?: number | null;
+  source_report_id?: number | null;
 }
 
 export interface CopilotMessage {
