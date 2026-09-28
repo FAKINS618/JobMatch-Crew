@@ -1692,7 +1692,37 @@ def _resume_version_row_to_dict(row: sqlite3.Row) -> dict:
         "raw_text": row["raw_text"],
         "profile": ResumeProfile.model_validate_json(row["profile_json"]),
         "created_at": format_datetime_for_display(row["created_at"]),
+        "parent_resume_version_id": row["parent_resume_version_id"] if "parent_resume_version_id" in row.keys() else None,
+        "source_report_id": row["source_report_id"] if "source_report_id" in row.keys() else None,
     }
+
+
+def get_resume_version_diff(from_version_id: int, to_version_id: int) -> dict | None:
+    """Return a section-level diff between two versions of the same resume."""
+    with connect_db() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM resume_versions WHERE id IN (?, ?)",
+            (from_version_id, to_version_id),
+        ).fetchall()
+        versions = {row["id"]: row for row in rows}
+        source = versions.get(from_version_id)
+        target = versions.get(to_version_id)
+        if source is None or target is None or source["resume_id"] != target["resume_id"]:
+            return None
+        before = ResumeProfile.model_validate_json(source["profile_json"]).model_dump(mode="json")
+        after = ResumeProfile.model_validate_json(target["profile_json"]).model_dump(mode="json")
+        sections = [
+            {"section": key, "before": before.get(key), "after": after.get(key)}
+            for key in before
+            if before.get(key) != after.get(key)
+        ]
+        return {
+            "from_version_id": from_version_id,
+            "to_version_id": to_version_id,
+            "sections": sections,
+            "raw_text_changed": source["raw_text"] != target["raw_text"],
+        }
 
 
 def _ensure_resume_version_exists(conn: sqlite3.Connection, resume_version_id: int | None) -> None:
