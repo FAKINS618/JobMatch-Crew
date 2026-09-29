@@ -193,6 +193,17 @@ export function saveResumeVersion(payload: {
   });
 }
 
+export interface ResumeVersionDiff {
+  from_version_id: number;
+  to_version_id: number;
+  raw_text_changed: boolean;
+  sections: Array<{ section: string; before: unknown; after: unknown; changed: boolean }>;
+}
+
+export function getResumeVersionDiff(fromVersionId: number, toVersionId: number) {
+  return apiFetch<ResumeVersionDiff>(`/api/resumes/versions/${fromVersionId}/diff/${toVersionId}`);
+}
+
 export function listReports() {
   return apiFetch<{ reports: ReportSummary[] }>("/api/reports");
 }
