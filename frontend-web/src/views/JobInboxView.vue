@@ -7,6 +7,8 @@ import {
   createMarketMatchTask,
   getReport,
   getMarketTask,
+  retryMarketTask,
+  cancelMarketTask,
   listJobTargets,
   listReports,
   type MarketTask,
@@ -126,24 +128,42 @@ async function startMarketSearch() {
       report_id: null,
       error_message: "",
     };
-    for (let attempt = 0; attempt < 180; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 700));
-      marketTask.value = await getMarketTask(taskId);
-      if (marketTask.value.status === "success") {
-        await loadReports();
-        noticeMessage.value = "市场岗位已更新，请审阅岗位依据后再加入投递管道。";
-        return;
-      }
-      if (marketTask.value.status === "failed") {
-        throw new Error(marketTask.value.error_message || "市场分析失败");
-      }
-    }
-    noticeMessage.value = "市场分析仍在运行，稍后刷新收件箱即可查看结果。";
+    await startMarketSearchPolling(taskId);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "启动市场分析失败";
   } finally {
     isLoading.value = false;
   }
+}
+
+async function startMarketSearchPolling(taskId: number) {
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 700));
+    marketTask.value = await getMarketTask(taskId);
+    if (marketTask.value.status === "success") {
+      await loadReports();
+      noticeMessage.value = "市场岗位已更新，请审阅岗位依据后再加入投递管道。";
+      return;
+    }
+    if (marketTask.value.status === "failed") throw new Error(marketTask.value.error_message || "市场分析失败");
+    if (marketTask.value.status === "cancelled") return;
+  }
+  noticeMessage.value = "市场分析仍在运行，稍后刷新收件箱即可查看结果。";
+}
+
+async function retryMarketSearch() {
+  if (!marketTask.value) return;
+  try {
+    const retried = await retryMarketTask(marketTask.value.id);
+    marketTask.value = { ...marketTask.value, status: retried.status, attempt_count: retried.attempt_count };
+    await startMarketSearchPolling(marketTask.value.id);
+  } catch (error) { errorMessage.value = error instanceof Error ? error.message : "重试市场分析失败"; }
+}
+
+async function cancelMarketSearch() {
+  if (!marketTask.value) return;
+  try { marketTask.value = await cancelMarketTask(marketTask.value.id); noticeMessage.value = "市场分析已取消"; }
+  catch (error) { errorMessage.value = error instanceof Error ? error.message : "取消市场分析失败"; }
 }
 
 async function openReport(reportId: number) {
@@ -195,7 +215,7 @@ onMounted(loadReports);
       <p>岗位来自市场分析报告。系统保留来源、有效性和匹配依据，不自动投递。</p>
     </header>
     <section class="artifact-section inbox-search">
-      <div class="artifact-heading"><div><p class="eyebrow">岗位搜索</p><h2>让副驾先找一批值得审阅的岗位</h2></div><span v-if="marketTask" class="helper-text">{{ marketTask.status }} · {{ marketTask.progress }}%</span></div>
+      <div class="artifact-heading"><div><p class="eyebrow">岗位搜索</p><h2>让副驾先找一批值得审阅的岗位</h2></div><span v-if="marketTask" class="helper-text">{{ marketTask.status }} · {{ marketTask.progress }}% · 第 {{ (marketTask.attempt_count ?? 0) + 1 }} 次</span></div>
       <div class="intake-grid">
         <label>用于搜索的简历<select v-model="selectedResumeId"><option :value="null">请选择简历版本</option><option v-for="resume in resumeVersions" :key="resume.id" :value="resume.id">{{ resume.version_name }}</option></select></label>
         <label>目标岗位方向<input v-model="targetRole" placeholder="例如：AI 应用开发实习" /></label>
@@ -203,6 +223,10 @@ onMounted(loadReports);
       </div>
       <button :disabled="isLoading || !selectedResumeId" @click="startMarketSearch">{{ isLoading ? "市场分析中" : "搜索并更新岗位" }}</button>
       <progress v-if="marketTask && ['pending', 'running'].includes(marketTask.status)" :value="marketTask.progress" max="100" />
+      <div v-if="marketTask" class="resume-actions">
+        <button v-if="['pending', 'running'].includes(marketTask.status)" class="secondary" :disabled="isLoading" @click="cancelMarketSearch">取消任务</button>
+        <button v-if="['failed', 'cancelled'].includes(marketTask.status)" class="secondary" @click="retryMarketSearch">重试任务</button>
+      </div>
     </section>
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="noticeMessage" class="success-message">{{ noticeMessage }}</p>
