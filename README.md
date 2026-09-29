@@ -154,6 +154,15 @@ Streamlit 兼容工作台：http://localhost:8501
 
 已有单用户数据仍保留在原 `DATABASE_PATH`，不会自动分配给新注册账号，也不会被导出到新账号的备份中。切换前请保留原数据库备份；历史数据归属需要单独确认后迁移。Streamlit 兼容工作台目前没有登录流程，开启认证后请使用 Vue 前端。
 
+历史数据迁移应在后端和 Redis worker 停止后执行。先注册目标账号，保持其业务数据为空，确认原库已由当前版本初始化，然后预览表行数并显式执行：
+
+```bash
+uv run python -m app.legacy_migration --email you@example.com
+uv run python -m app.legacy_migration --email you@example.com --apply
+```
+
+可用 `--database /path/to/jobmatch.db` 指定原库。迁移保留所有业务记录的 ID 和关联，目标库非空时拒绝执行；原库业务记录不删除。首次执行会在原库登记唯一归属账号，失败后只能由同一账号重试。请先备份原库及其 `-wal`、`-shm` 文件，再运行迁移。
+
 ## 可选 Redis 缓存
 
 项目使用 Redis 作为可选加速层，SQLite 仍然保存简历版本、报告、证据链、人工反馈和会话历史。Redis 未启动或连接失败时，系统会自动回退到现有 SQLite + LLM 流程，不影响核心功能。
@@ -204,4 +213,4 @@ pnpm lint
 - 可通过 `python -m evals.export_reviewed_feedback --database jobmatch.db` 导出人工修正/拒绝的脱敏评测候选数据，不会覆盖现有 fixtures。
 - 启动后可运行 `powershell -ExecutionPolicy Bypass -File scripts/smoke.ps1` 检查健康状态和非敏感能力信息。
 - Vue 已覆盖副驾、简历版本、岗位收件箱、成长计划和投递管道；Streamlit 保留为兼容和调试入口。
-- 下一阶段优先完成：历史数据归属迁移、岗位详情的面试复盘、简历区块差异确认，以及投递事件时间线。
+- 下一阶段优先完成：岗位详情的面试复盘、简历区块差异确认，以及投递事件时间线。
