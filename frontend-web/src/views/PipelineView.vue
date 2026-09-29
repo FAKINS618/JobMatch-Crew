@@ -43,6 +43,23 @@ const nextStatuses: Record<JobTarget["status"], JobTarget["status"][]> = {
 const selectedTarget = computed(() => targets.value.find((target) => target.id === selectedTargetId.value) ?? null);
 const selectedTimeline = computed(() => selectedTarget.value ? timelineById.value[selectedTarget.value.id] : undefined);
 const canReview = computed(() => ["interview", "offer", "rejected"].includes(selectedTarget.value?.status ?? "saved"));
+const statusCounts = computed(() => targets.value.reduce<Record<string, number>>((counts, target) => {
+  counts[target.status] = (counts[target.status] ?? 0) + 1;
+  return counts;
+}, {}));
+const followUpCount = computed(() => targets.value.filter((target) => {
+  if (target.status !== "applied") return false;
+  const updated = new Date(target.updated_at ?? "").getTime();
+  return Number.isFinite(updated) && Date.now() - updated >= 7 * 24 * 60 * 60 * 1000;
+}).length);
+
+function deadlineHint(deadline: string | null): string {
+  if (!deadline) return "";
+  const days = Math.ceil((new Date(`${deadline}T23:59:59`).getTime() - Date.now()) / 86400000);
+  if (days < 0) return "已截止";
+  if (days <= 3) return `${days} 天内截止`;
+  return `剩余 ${days} 天`;
+}
 
 async function loadTimeline(targetId: number) {
   timelineById.value = { ...timelineById.value, [targetId]: await getJobTargetTimeline(targetId) };
@@ -132,6 +149,15 @@ onMounted(loadTargets);
     <header class="page-heading"><div><p class="eyebrow">投递管道</p><h1>让每次投递都有后续</h1></div><p>记录真实投递、面试过程和复盘结果；系统不会替你自动投递。</p></header>
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="noticeMessage" class="success-message">{{ noticeMessage }}</p>
+    <section class="artifact-section pipeline-summary">
+      <div class="resume-row"><div><p class="eyebrow">投递概览</p><h2>把下一步变成可追踪记录</h2></div><span class="helper-text">{{ followUpCount }} 个岗位需要跟进</span></div>
+      <div class="summary-grid">
+        <div><strong>{{ statusCounts.saved || 0 }}</strong><span>待投递</span></div>
+        <div><strong>{{ statusCounts.applied || 0 }}</strong><span>已投递</span></div>
+        <div><strong>{{ statusCounts.interview || 0 }}</strong><span>面试中</span></div>
+        <div><strong>{{ statusCounts.offer || 0 }}</strong><span>Offer</span></div>
+      </div>
+    </section>
     <section v-if="targets.length === 0" class="artifact-section"><p>暂无投递目标。先从岗位收件箱加入确认有效的岗位。</p></section>
     <div v-else class="pipeline-layout">
       <section class="artifact-section pipeline-list">
@@ -139,6 +165,7 @@ onMounted(loadTargets);
         <article v-for="target in targets" :key="target.id" class="pipeline-card" :class="{ selected: selectedTargetId === target.id }" @click="selectTarget(target)">
           <div class="artifact-heading"><div><p class="eyebrow">{{ target.priority }} 类 · 匹配 {{ target.match_score ?? "-" }}</p><h2>{{ target.title }}</h2><p>{{ target.company }}</p></div><span class="status-badge">{{ statusLabels[target.status] }}</span></div>
           <select :value="target.status" @click.stop @change="changeStatus(target, $event)"><option :value="target.status">{{ statusLabels[target.status] }}</option><option v-for="status in nextStatuses[target.status]" :key="status" :value="status">{{ statusLabels[status] }}</option></select>
+          <p v-if="target.deadline_at" class="helper-text">{{ deadlineHint(target.deadline_at) }} · {{ target.deadline_at }}</p>
         </article>
       </section>
       <section v-if="selectedTarget && selectedTimeline" class="artifact-section pipeline-detail">
