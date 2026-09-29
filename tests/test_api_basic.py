@@ -5,6 +5,12 @@ import pytest
 
 from app.main import app
 from app import database
+from app.auth import current_user_id, get_current_user_id
+from app.cache import build_cache_key
+from app.config import settings
+from app.services import copilot_context_service
+from app import task_worker
+from app.task_queue import dispatch_task
 
 
 # 测基础 API：不调用大模型、不联网，只验证 FastAPI 应用能正常加载。
@@ -88,6 +94,7 @@ def test_auth_register_login_and_protected_api(monkeypatch):
     monkeypatch.setattr(database.settings, "database_path", db_path)
     monkeypatch.setattr(database, "DB_PATH", db_path)
     monkeypatch.setattr(database.settings, "auth_enabled", True)
+    monkeypatch.setattr(database.settings, "auth_secret", "test-auth-secret-with-at-least-32-characters")
     with TestClient(app) as lifespan_client:
         denied = lifespan_client.get("/api/reports")
         assert denied.status_code == 401
@@ -99,3 +106,169 @@ def test_auth_register_login_and_protected_api(monkeypatch):
         token = registered.json()["access_token"]
         allowed = lifespan_client.get("/api/reports", headers={"Authorization": f"Bearer {token}"})
         assert allowed.status_code == 200
+
+
+def test_auth_rejects_default_signing_secret(monkeypatch):
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(settings, "auth_secret", "change-me-in-production")
+    with pytest.raises(RuntimeError, match="AUTH_SECRET"):
+        with TestClient(app):
+            pass
+
+
+def test_authenticated_users_have_separate_business_databases(monkeypatch):
+    db_path = Path("tmp") / f"isolation-{uuid4().hex}.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    monkeypatch.setattr(database.settings, "auth_enabled", True)
+    monkeypatch.setattr(database.settings, "auth_secret", "test-auth-secret-with-at-least-32-characters")
+    with TestClient(app) as client:
+        users = []
+        for _ in range(2):
+            response = client.post("/api/auth/register", json={
+                "email": f"member-{uuid4().hex}@example.com", "password": "long-password-123",
+            })
+            assert response.status_code == 201
+            users.append(response.json())
+        first = {"Authorization": f"Bearer {users[0]['access_token']}"}
+        second = {"Authorization": f"Bearer {users[1]['access_token']}"}
+        created = client.post("/api/resumes/versions", headers=first, json={
+            "version_name": "Backend resume", "target_role": "Backend",
+            "raw_text": "Python FastAPI database internship project experience. " * 3,
+            "profile": {"skills": ["Python"]},
+        })
+        assert created.status_code == 200
+        assert len(client.get("/api/resumes/versions", headers=first).json()) == 1
+        assert client.get("/api/resumes/versions", headers=second).json() == []
+        assert client.get("/api/resumes/versions", headers=first).json()[0]["id"] == created.json()["id"]
+        token = current_user_id.set(users[0]["user"]["id"])
+        try:
+            report_id = database.save_report(
+                "Backend", 80, "resume content", "job description", "report content",
+            )
+            task_id = database.create_analysis_task("market_match", {"request": {"target_role": "Backend"}})
+            with database.connect_db() as conn:
+                owner = conn.execute("SELECT user_id FROM reports WHERE id = ?", (report_id,)).fetchone()[0]
+            assert owner == users[0]["user"]["id"]
+        finally:
+            current_user_id.reset(token)
+        assert client.get(f"/api/reports/{report_id}", headers=first).status_code == 200
+        assert client.get(f"/api/reports/{report_id}", headers=second).status_code == 404
+        assert client.get(f"/api/tasks/{task_id}", headers=first).status_code == 200
+        assert client.get(f"/api/tasks/{task_id}", headers=second).status_code == 404
+        with pytest.raises(RuntimeError, match="user context"):
+            database.connect_db()
+        export = client.get("/api/data/export", headers=second)
+        assert export.status_code == 200
+        assert export.json()["tables"]["reports"] == []
+        assert "users" not in export.json()["tables"]
+
+
+def test_copilot_cache_keeps_same_report_id_separate_by_user(monkeypatch):
+    class FakeCache:
+        def __init__(self):
+            self.values = {}
+
+        def get_json(self, key):
+            return self.values.get(key)
+
+        def set_json(self, key, value, _ttl):
+            self.values[key] = value
+
+        def delete(self, key):
+            self.values.pop(key, None)
+
+    fake = FakeCache()
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(settings, "cache_enabled", True)
+    monkeypatch.setattr(copilot_context_service, "get_cache", lambda: fake)
+    monkeypatch.setattr(copilot_context_service, "get_copilot_report_source_turn", lambda _id: None)
+    monkeypatch.setattr(copilot_context_service, "list_recent_copilot_messages", lambda *_args, **_kwargs: [])
+    contexts = []
+    for user_id, summary in ((11, "first private summary"), (12, "second private summary")):
+        token = current_user_id.set(user_id)
+        try:
+            contexts.append(copilot_context_service.get_copilot_context(
+                {"id": 1, "parsed_result": f'{{"summary": "{summary}"}}'}, 1,
+            ))
+        finally:
+            current_user_id.reset(token)
+    assert contexts[0]["snapshot"]["analysis"]["summary"] == "first private summary"
+    assert contexts[1]["snapshot"]["analysis"]["summary"] == "second private summary"
+    assert len(fake.values) == 4
+    with pytest.raises(RuntimeError, match="user context"):
+        build_cache_key("copilot:context_pointer", {"report_id": 1})
+
+
+def test_worker_restores_user_context_after_task(monkeypatch):
+    seen = []
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(task_worker, "run_copilot_turn", lambda _id: seen.append(get_current_user_id()))
+
+    task_worker.handle_task({"user_id": 7, "task_type": "copilot_turn", "payload": {"turn_id": 1}})
+
+    assert seen == [7]
+    assert get_current_user_id() is None
+    with pytest.raises(ValueError, match="用户身份"):
+        task_worker.handle_task({"task_type": "copilot_turn", "payload": {"turn_id": 1}})
+
+
+def test_local_background_task_keeps_request_owner(monkeypatch):
+    class PendingTasks:
+        def add_task(self, callback, *args):
+            self.callback = callback
+            self.args = args
+
+    pending = PendingTasks()
+    seen = []
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(settings, "task_queue_enabled", False)
+    token = current_user_id.set(8)
+    try:
+        dispatch_task(
+            pending, task_type="copilot_turn", payload={"turn_id": 1},
+            local_runner=lambda _id: seen.append(get_current_user_id()), local_args=(1,),
+        )
+    finally:
+        current_user_id.reset(token)
+    pending.callback(*pending.args)
+    assert seen == [8]
+    assert get_current_user_id() is None
+
+
+def test_worker_failure_update_uses_task_owner(monkeypatch):
+    class StopWorker(Exception):
+        pass
+
+    class FakeQueue:
+        def __init__(self):
+            self.client = "fake"
+            self.acknowledged = []
+            self.reads = 0
+
+        def ensure_group(self):
+            pass
+
+        def reclaim_pending(self, _consumer):
+            return []
+
+        def consume(self, _consumer):
+            self.reads += 1
+            if self.reads > 1:
+                raise StopWorker
+            return "message-1", {"user_id": 9, "task_type": "unknown", "payload": {"task_id": 3}}
+
+        def acknowledge(self, message_id):
+            self.acknowledged.append(message_id)
+
+    queue = FakeQueue()
+    updates = []
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(task_worker, "RedisTaskQueue", lambda: queue)
+    monkeypatch.setattr(task_worker, "update_analysis_task", lambda task_id, **kwargs: updates.append((get_current_user_id(), task_id, kwargs)))
+
+    with pytest.raises(StopWorker):
+        task_worker.main()
+
+    assert updates == [(9, 3, {"status": "failed", "progress": 100, "error_message": "任务消息处理失败，请重试。"})]
+    assert queue.acknowledged == ["message-1"]
+    assert get_current_user_id() is None
