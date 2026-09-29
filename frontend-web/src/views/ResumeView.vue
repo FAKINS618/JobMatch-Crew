@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import {
   getMarketSearchPreference,
+  getResumeVersionDiff,
   getResumeAnalysisHistory,
   parseResume,
   saveResumeVersion,
@@ -21,6 +22,11 @@ const rawText = ref("");
 const versionName = ref("");
 const targetRole = ref("");
 const draftProfile = ref<ResumeProfile | null>(null);
+const draftSkills = ref("");
+const draftEducation = ref("");
+const draftInternships = ref("");
+const draftAwards = ref("");
+const draftTargetRoles = ref("");
 const isParsing = ref(false);
 const isSaving = ref(false);
 const errorMessage = ref("");
@@ -28,6 +34,7 @@ const successMessage = ref("");
 const canSave = computed(() => Boolean(draftProfile.value && versionName.value.trim()));
 const historyByResume = ref<Record<number, ResumeAnalysisHistory | undefined>>({});
 const preferenceByResume = ref<Record<number, ResumeMarketSearchPreference | undefined>>({});
+const diffByResume = ref<Record<number, Awaited<ReturnType<typeof getResumeVersionDiff>> | undefined>>({});
 const historyLoading = ref<number | null>(null);
 const historyError = ref("");
 
@@ -45,6 +52,7 @@ async function parseDraft() {
   successMessage.value = "";
   try {
     draftProfile.value = (await parseResume(rawText.value.trim())).profile;
+    syncDraftFields(draftProfile.value);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "简历解析失败";
   } finally {
@@ -52,16 +60,36 @@ async function parseDraft() {
   }
 }
 
+function syncDraftFields(profile: ResumeProfile) {
+  draftSkills.value = profile.skills.join("\n");
+  draftEducation.value = profile.education.join("\n");
+  draftInternships.value = profile.internships.join("\n");
+  draftAwards.value = profile.awards.join("\n");
+  draftTargetRoles.value = profile.target_roles.join("\n");
+}
+
+function splitLines(value: string) {
+  return value.split(/\r?\n|[,，]/).map((item) => item.trim()).filter(Boolean);
+}
+
 async function saveDraft() {
   if (!draftProfile.value) return;
   isSaving.value = true;
   errorMessage.value = "";
   try {
+    const profile = {
+      ...draftProfile.value,
+      skills: splitLines(draftSkills.value),
+      education: splitLines(draftEducation.value),
+      internships: splitLines(draftInternships.value),
+      awards: splitLines(draftAwards.value),
+      target_roles: splitLines(draftTargetRoles.value),
+    };
     await saveResumeVersion({
       version_name: versionName.value.trim(),
       target_role: targetRole.value.trim(),
       raw_text: rawText.value.trim(),
-      profile: draftProfile.value,
+      profile,
     });
     await store.loadResumeVersions();
     successMessage.value = "简历版本已保存，可立即用于副驾分析。";
@@ -80,12 +108,17 @@ async function toggleHistory(resumeId: number) {
   historyLoading.value = resumeId;
   historyError.value = "";
   try {
-    const [history, preference] = await Promise.all([
+    const current = store.resumeVersions.find((item) => item.id === resumeId);
+    const [history, preference, diff] = await Promise.all([
       getResumeAnalysisHistory(resumeId),
       getMarketSearchPreference(resumeId),
+      current?.parent_resume_version_id
+        ? getResumeVersionDiff(current.parent_resume_version_id, resumeId)
+        : Promise.resolve(undefined),
     ]);
     historyByResume.value = { ...historyByResume.value, [resumeId]: history };
     preferenceByResume.value = { ...preferenceByResume.value, [resumeId]: preference };
+    diffByResume.value = { ...diffByResume.value, [resumeId]: diff };
   } catch (error) {
     historyError.value = error instanceof Error ? error.message : "分析历史暂时无法加载";
   } finally {
@@ -135,6 +168,12 @@ function artifactText(payload: Record<string, unknown>, key: string): string {
   const value = payload[key];
   return typeof value === "string" ? value : "";
 }
+
+function formatDiffValue(value: unknown): string {
+  if (Array.isArray(value)) return value.join("、") || "空";
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value ?? "空");
+}
 </script>
 
 <template>
@@ -159,7 +198,13 @@ function artifactText(payload: Record<string, unknown>, key: string): string {
       <p v-if="successMessage" class="success-message">{{ successMessage }}</p>
       <div v-if="draftProfile" class="resume-detail draft-profile">
         <p class="eyebrow">待确认档案</p>
-        <section><h2>技能</h2><p>{{ draftProfile.skills.join(" · ") || "未提取" }}</p></section>
+        <section class="intake-grid">
+          <label>技能（每行一项）<textarea v-model="draftSkills" /></label>
+          <label>教育经历（每行一项）<textarea v-model="draftEducation" /></label>
+          <label>实习经历（每行一项）<textarea v-model="draftInternships" /></label>
+          <label>奖项（每行一项）<textarea v-model="draftAwards" /></label>
+          <label>目标岗位（每行一项）<textarea v-model="draftTargetRoles" /></label>
+        </section>
         <section><h2>项目</h2><p v-if="draftProfile.projects.length === 0">未提取项目经历</p><ul v-else><li v-for="project in draftProfile.projects" :key="project.name"><strong>{{ project.name }}</strong><span>{{ project.technologies.join(" · ") }}</span><p>{{ project.description }}</p></li></ul></section>
         <div class="intake-grid">
           <label>版本名称<input v-model="versionName" placeholder="例如：Python 后端实习 v1" /></label>
@@ -182,6 +227,13 @@ function artifactText(payload: Record<string, unknown>, key: string): string {
           <RouterLink class="link-button" :to="{ path: '/copilot', query: { resume: resume.id } }">用此版本开始分析</RouterLink>
         </div>
         <div v-if="expandedResumeId === resume.id" class="resume-detail">
+          <section v-if="diffByResume[resume.id]" class="diff-section">
+            <div class="resume-row"><h2>相对父版本的变更</h2><span class="helper-text">{{ diffByResume[resume.id]?.raw_text_changed ? "原文已变化" : "仅结构化档案变化" }}</span></div>
+            <p v-if="!diffByResume[resume.id]?.sections.length" class="helper-text">没有结构化区块变化。</p>
+            <div v-for="item in diffByResume[resume.id]?.sections" :key="item.section" class="diff-row">
+              <strong>{{ item.section }}</strong><span>{{ formatDiffValue(item.before) }}</span><span>→</span><span>{{ formatDiffValue(item.after) }}</span>
+            </div>
+          </section>
           <section><h2>技能</h2><p>{{ resume.profile.skills.join(" · ") || "未提取" }}</p></section>
           <section><h2>项目</h2><p v-if="resume.profile.projects.length === 0">未提取项目经历</p><ul v-else><li v-for="project in resume.profile.projects" :key="project.name"><strong>{{ project.name }}</strong><span>{{ project.technologies.join(" · ") }}</span><p>{{ project.description }}</p></li></ul></section>
           <details><summary>查看原始简历文本</summary><pre>{{ resume.raw_text }}</pre></details>
