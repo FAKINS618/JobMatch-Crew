@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import re
+import threading
 from typing import Any
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -26,22 +27,47 @@ DISPLAY_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 SQLITE_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = 30_000
+_user_db_lock = threading.Lock()
+_initialized_user_dbs: set[object] = set()
 
 
-def connect_db() -> sqlite3.Connection:
+def _open_db(path) -> sqlite3.Connection:
     """Create a consistently configured SQLite connection.
 
     Foreign keys are a per-connection SQLite setting, so every production
     connection must enable them explicitly. WAL and a busy timeout reduce
     contention between API reads and background analysis writes.
     """
-    connection = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT_SECONDS)
+    connection = sqlite3.connect(path, timeout=SQLITE_TIMEOUT_SECONDS)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
     connection.execute("PRAGMA journal_mode = WAL")
     connection.execute("PRAGMA synchronous = NORMAL")
     return connection
+
+
+def connect_auth_db() -> sqlite3.Connection:
+    """Authentication accounts always live in the local master database."""
+    return _open_db(DB_PATH)
+
+
+def connect_db() -> sqlite3.Connection:
+    from app.auth import get_current_user_id
+
+    user_id = get_current_user_id() if settings.auth_enabled else None
+    if user_id is None:
+        if settings.auth_enabled:
+            raise RuntimeError("Authenticated user context is required for business data")
+        return _open_db(DB_PATH)
+    path = DB_PATH.with_name(f"{DB_PATH.stem}.user-{user_id}{DB_PATH.suffix}")
+    if path not in _initialized_user_dbs:
+        with _user_db_lock:
+            if path not in _initialized_user_dbs:
+                init_db(path)
+                recover_stale_background_tasks(settings.task_stale_after_seconds, path)
+                _initialized_user_dbs.add(path)
+    return _open_db(path)
 
 
 # 这些字段用于追踪 LLM 输出质量：原始输出、解析结果、解析状态和耗时等。
@@ -93,6 +119,11 @@ ACTION_ITEM_EXTRA_COLUMNS = {
     "archived_at": "TIMESTAMP",
 }
 
+USER_OWNED_TABLES = (
+    "reports", "resumes", "resume_versions", "job_posts", "analysis_tasks",
+    "job_targets", "action_items", "copilot_sessions",
+)
+
 
 def format_datetime_for_display(value: str | None) -> str | None:
     """将 SQLite 保存的 UTC 时间转换为北京时间展示。
@@ -123,12 +154,12 @@ def _with_display_times(row: dict) -> dict:
     return result
 
 
-def init_db() -> None:
+def init_db(path=None) -> None:
     """初始化本地 SQLite 数据库。
     reports 表保存最终分析报告；
     job_posts 表保存某次市场匹配分析参考过的岗位样本。
     """
-    with connect_db() as conn:
+    with _open_db(path or DB_PATH) as conn:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
         )
@@ -572,6 +603,7 @@ def init_db() -> None:
         _ensure_turn_columns(conn)
         _ensure_requirement_evidence_columns(conn)
         _ensure_action_item_columns(conn)
+        _ensure_user_ownership_columns(conn)
         # 历史报告可能是在 resume_suggestions 表加入前生成的。启动时补齐
         # 可从结构化报告安全提取的建议，确保工作台和简历页看到同一事实。
         _backfill_report_suggestions(conn)
@@ -586,6 +618,23 @@ def _ensure_analysis_task_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE analysis_tasks ADD COLUMN {column_name} {column_type}")
 
 
+def _ensure_user_ownership_columns(conn: sqlite3.Connection) -> None:
+    """Add ownership to legacy tables and assign existing local data to one owner."""
+    conn.execute("INSERT OR IGNORE INTO users(email, password_hash) VALUES ('local-owner@localhost', 'managed-local-account')")
+    owner_id = _owner_id() or conn.execute("SELECT id FROM users WHERE email = 'local-owner@localhost'").fetchone()[0]
+    for table in USER_OWNED_TABLES:
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "user_id" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER")
+        conn.execute(f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL", (owner_id,))
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_user_id ON {table}(user_id)")
+        if _owner_id() is not None:
+            conn.execute(
+                f"CREATE TRIGGER IF NOT EXISTS trg_{table}_owner_insert AFTER INSERT ON {table} "
+                f"WHEN NEW.user_id IS NULL BEGIN UPDATE {table} SET user_id = {int(owner_id)} WHERE id = NEW.id; END"
+            )
+
+
 def _apply_schema_migrations(conn: sqlite3.Connection) -> None:
     applied = {row[0] for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
     if 1 not in applied:
@@ -596,7 +645,7 @@ def _apply_schema_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("INSERT INTO schema_migrations(version) VALUES (2)")
 
 
-def recover_stale_background_tasks(stale_after_seconds: int) -> dict[str, int]:
+def recover_stale_background_tasks(stale_after_seconds: int, path=None) -> dict[str, int]:
     """Mark abandoned in-process background work as failed after a restart.
 
     FastAPI BackgroundTasks are not durable. Persisted rows must not remain in
@@ -609,7 +658,7 @@ def recover_stale_background_tasks(stale_after_seconds: int) -> dict[str, int]:
     task_error = "服务重启或任务超时，后台分析未完成，请重新发起。"
     turn_error = "服务重启或分析超时，本次分析未完成，请重新发起。"
 
-    with connect_db() as conn:
+    with _open_db(path or DB_PATH) as conn:
         task_cursor = conn.execute(
             """
             UPDATE analysis_tasks
@@ -1835,6 +1884,11 @@ def _job_target_row_to_dict(row: sqlite3.Row) -> dict:
     return result
 
 
+def _owner_id() -> int | None:
+    from app.auth import get_current_user_id
+    return get_current_user_id()
+
+
 _HISTORY_FORBIDDEN_KEYS = {
     "raw_result",
     "raw_output",
@@ -1956,7 +2010,7 @@ def list_job_targets(status: str | None = None) -> list[dict]:
     with connect_db() as conn:
         conn.row_factory = sqlite3.Row
         query = "SELECT * FROM job_targets"
-        params: tuple[str, ...] = ()
+        params: tuple[object, ...] = ()
         if status:
             query += " WHERE status = ?"
             params = (status,)
