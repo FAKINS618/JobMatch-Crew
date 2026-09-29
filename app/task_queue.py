@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextvars import copy_context
 from collections.abc import Callable
 from typing import Any
 
@@ -12,6 +13,7 @@ from redis import Redis
 from redis.exceptions import ResponseError
 
 from app.config import settings
+from app.auth import get_current_user_id
 
 
 class TaskQueueUnavailable(RuntimeError):
@@ -28,8 +30,11 @@ class RedisTaskQueue:
         )
 
     def enqueue(self, task_type: str, payload: dict[str, Any]) -> None:
+        user_id = get_current_user_id()
+        if settings.auth_enabled and user_id is None:
+            raise RuntimeError("Authenticated user context is required for queued tasks")
         envelope = json.dumps(
-            {"task_type": task_type, "payload": payload},
+            {"task_type": task_type, "payload": payload, "user_id": user_id},
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -119,4 +124,4 @@ def dispatch_task(
     if settings.task_queue_enabled:
         RedisTaskQueue().enqueue(task_type, payload)
         return
-    background_tasks.add_task(local_runner, *local_args)
+    background_tasks.add_task(copy_context().run, local_runner, *local_args)
