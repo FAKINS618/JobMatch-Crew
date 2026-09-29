@@ -20,6 +20,23 @@ button.text-button { background: transparent; color: #0f766e; padding-inline: 4p
 .side-nav nav a { border-radius: 5px; color: #d7e3ef; padding: 9px 10px; text-decoration: none; }
 .side-nav nav a.router-link-active { background: #1f4f70; color: #fff; }
 .side-note { color: #9fb3c8; font-size: 13px; margin-top: auto; }
+.account-controls { border-top: 1px solid #31506a; display: grid; gap: 8px; margin-top: auto; padding-top: 16px; }
+.account-email { color: #d7e3ef; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-logout { background: transparent; border: 1px solid #66839b; color: #fff; font-size: 13px; justify-self: start; padding: 6px 10px; }
+.account-controls + .side-note { margin-top: 0; }
+.auth-page { align-items: center; background: #f4f6f8; display: flex; justify-content: center; min-height: 100vh; padding: 32px 20px; }
+.auth-panel { max-width: 400px; width: 100%; }
+.auth-brand { color: #102a43; display: block; font-size: 24px; font-weight: 800; margin-bottom: 32px; }
+.auth-panel h1 { color: #102a43; font-size: 24px; margin: 24px 0; }
+.auth-mode { border-bottom: 1px solid #bcccdc; display: flex; gap: 24px; }
+.auth-mode button { background: transparent; border-bottom: 3px solid transparent; border-radius: 0; color: #52606d; padding: 10px 2px; }
+.auth-mode button.selected { border-color: #0f766e; color: #0f766e; }
+.auth-form { display: grid; gap: 18px; }
+.auth-form > button { margin-top: 6px; }
+.auth-status { flex-direction: column; gap: 16px; text-align: center; }
+.auth-status .auth-brand { margin-bottom: 0; }
+.auth-status p { color: #52606d; margin: 0; }
+.auth-status .error-message { color: #a61e1e; }
 .main-content { height: 100vh; margin-left: 220px; min-width: 0; overflow-y: auto; }
 .workspace { margin: 0 auto; max-width: 1180px; padding: 42px 44px 64px; }
 .page-heading { align-items: end; display: flex; gap: 32px; justify-content: space-between; margin-bottom: 28px; }
@@ -127,6 +144,9 @@ progress { accent-color: #0f766e; height: 8px; width: 100%; }
   .side-nav nav { display: flex; flex-shrink: 0; min-width: max-content; }
   .side-nav nav a { white-space: nowrap; }
   .side-note { display: none; }
+  .account-controls { border-left: 1px solid #66839b; border-top: 0; display: flex; flex-shrink: 0; gap: 8px; margin: 0; padding: 0 0 0 12px; }
+  .account-email { align-self: center; max-width: 150px; }
+  .account-logout { white-space: nowrap; }
   .main-content { height: auto; margin-left: 0; overflow: visible; }
   .workspace { padding: 28px 18px; }
   .page-heading, .intake-grid, .composer, .evidence-item, .inbox-layout, .summary-grid { display: grid; grid-template-columns: 1fr; }
