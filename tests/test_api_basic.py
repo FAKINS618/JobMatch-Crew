@@ -107,6 +107,10 @@ def test_auth_register_login_and_protected_api(monkeypatch):
         token = registered.json()["access_token"]
         allowed = lifespan_client.get("/api/reports", headers={"Authorization": f"Bearer {token}"})
         assert allowed.status_code == 200
+        me = lifespan_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        assert me.json()["email"] == registered.json()["user"]["email"]
+        assert lifespan_client.get("/api/auth/me").status_code == 401
 
 
 def test_auth_rejects_default_signing_secret(monkeypatch):
