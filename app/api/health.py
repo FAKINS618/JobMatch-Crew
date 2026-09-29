@@ -25,7 +25,7 @@ def readiness() -> dict[str, object]:
         "evidence_feedback",
     }
     try:
-        with database.connect_db() as conn:
+        with database.connect_auth_db() as conn:
             rows = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
