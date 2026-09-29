@@ -29,6 +29,14 @@ button.text-button { background: transparent; color: #0f766e; padding-inline: 4p
 .intake-panel, .conversation-panel, .artifact-section { background: #fff; border: 1px solid #d9e2ec; border-radius: 6px; margin-bottom: 16px; padding: 24px; }
 .intake-panel h2, .artifact-section h2 { font-size: 20px; margin: 0 0 16px; }
 .intake-grid { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
+.summary-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 16px; }
+.summary-grid div { background: #f5f7fa; border: 1px solid #d9e2ec; padding: 14px; }
+.summary-grid strong, .summary-grid span { display: block; }
+.summary-grid strong { color: #102a43; font-size: 24px; }
+.summary-grid span { color: #627d98; font-size: 13px; margin-top: 4px; }
+.diff-section { background: #f8fafc; border: 1px solid #d9e2ec; margin-bottom: 18px; padding: 14px; }
+.diff-row { display: grid; gap: 8px; grid-template-columns: 120px minmax(0, 1fr) 20px minmax(0, 1fr); padding: 8px 0; border-top: 1px solid #e4e7eb; }
+.diff-row span { overflow-wrap: anywhere; }
 label { color: #334e68; display: grid; font-size: 14px; font-weight: 700; gap: 6px; }
 input, select, textarea { background: #fff; border: 1px solid #bcccdc; border-radius: 5px; color: #102a43; padding: 10px; width: 100%; }
 textarea { min-height: 110px; resize: vertical; }
@@ -121,7 +129,7 @@ progress { accent-color: #0f766e; height: 8px; width: 100%; }
   .side-note { display: none; }
   .main-content { height: auto; margin-left: 0; overflow: visible; }
   .workspace { padding: 28px 18px; }
-  .page-heading, .intake-grid, .composer, .evidence-item, .inbox-layout { display: grid; grid-template-columns: 1fr; }
+  .page-heading, .intake-grid, .composer, .evidence-item, .inbox-layout, .summary-grid { display: grid; grid-template-columns: 1fr; }
   .page-heading { gap: 8px; }
   .composer button { width: 100%; }
 }
