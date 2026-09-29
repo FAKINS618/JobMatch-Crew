@@ -22,7 +22,7 @@ from app.api.copilot import router as copilot_router
 from app.api.system import router as system_router
 from app.api.data import router as data_router
 from app.api.auth import router as auth_router
-from app.auth import verify_token
+from app.auth import current_user_id, verify_token
 from app.config import settings
 
 logging.basicConfig(
@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
     启动阶段初始化本地数据库；
     后续如果接入向量库、任务队列、连接池，也可以统一放在这里。
     """
+    if settings.auth_enabled and (settings.auth_secret == "change-me-in-production" or len(settings.auth_secret) < 32):
+        raise RuntimeError("AUTH_SECRET must be a unique value of at least 32 characters when authentication is enabled")
     init_db()
     recovered = recover_stale_background_tasks(settings.task_stale_after_seconds)
     if any(recovered.values()):
@@ -103,12 +105,20 @@ def create_app() -> FastAPI:
                 _rate_limit_buckets[bucket_key] = bucket
 
         is_public = request.url.path in public_paths or request.url.path.startswith("/api/auth") or request.method == "OPTIONS"
+        authenticated_user_id = None
         if settings.auth_enabled and request.url.path.startswith("/api") and not is_public:
             authorization = request.headers.get("Authorization", "")
-            if not authorization.lower().startswith("bearer ") or verify_token(authorization[7:].strip()) is None:
+            user = verify_token(authorization[7:].strip()) if authorization.lower().startswith("bearer ") else None
+            if user is None:
                 return JSONResponse(status_code=401, content={"detail": "需要登录后访问"})
+            authenticated_user_id = int(user["id"])
+        request.state.user_id = authenticated_user_id
 
-        response = await call_next(request)
+        token = current_user_id.set(authenticated_user_id)
+        try:
+            response = await call_next(request)
+        finally:
+            current_user_id.reset(token)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
