@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { flushPromises, mount } from "@vue/test-utils";
+import App from "../App.vue";
+import AuthView from "../views/AuthView.vue";
 import { apiFetch, resolveApiUrl } from "./client";
 import { submitEvidenceFeedback } from "./copilot";
+import { getCurrentUser } from "./auth";
 import { confirmJobPost, createInterviewReview, getJobTargetTimeline, updateResumeSuggestion } from "./workspace";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  window.localStorage.clear();
 });
 
 describe("apiFetch", () => {
@@ -34,6 +39,17 @@ describe("apiFetch", () => {
       message: "简历版本不存在",
       status: 422,
     });
+  });
+
+  it("clears an expired token and announces that authentication is required", async () => {
+    window.localStorage.setItem("cs-jobmate-access-token", "expired-token");
+    const expired = vi.fn();
+    window.addEventListener("jobmatch-auth-expired", expired, { once: true });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"detail":"需要登录后访问"}', { status: 401 })));
+
+    await expect(getCurrentUser()).rejects.toMatchObject({ status: 401 });
+    expect(window.localStorage.getItem("cs-jobmate-access-token")).toBeNull();
+    expect(expired).toHaveBeenCalledOnce();
   });
 
   it("submits a structured evidence review", async () => {
@@ -78,6 +94,51 @@ describe("apiFetch", () => {
     await expect(
       submitEvidenceFeedback(7, { requirement_id: "req-1", verdict: "rejected" }),
     ).rejects.toMatchObject({ message: "证据不存在", status: 422 });
+  });
+});
+
+describe("account screens", () => {
+  it("requires sign in before rendering a protected workspace", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"auth_enabled":true}', { status: 200 })));
+    const wrapper = mount(App, { global: { stubs: { RouterLink: true, RouterView: true } } });
+    await flushPromises();
+    expect(wrapper.find(".auth-mode").exists()).toBe(true);
+    expect(wrapper.find(".side-nav").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("keeps the local workspace available when authentication is disabled", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"auth_enabled":false}', { status: 200 })));
+    const wrapper = mount(App, { global: { stubs: { RouterLink: true, RouterView: true } } });
+    await flushPromises();
+    expect(wrapper.find(".side-nav").exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("logs in and stores the access token", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      access_token: "signed-token", token_type: "bearer",
+      user: { id: 2, email: "user@example.com", created_at: null },
+    }), { status: 200 })));
+    const wrapper = mount(AuthView);
+    await wrapper.get('input[type="email"]').setValue("user@example.com");
+    await wrapper.get('input[type="password"]').setValue("long-password");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(window.localStorage.getItem("cs-jobmate-access-token")).toBe("signed-token");
+    expect(wrapper.emitted("authenticated")).toHaveLength(1);
+  });
+
+  it("shows registration errors without storing a token", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"detail":"邮箱已注册"}', { status: 409 })));
+    const wrapper = mount(AuthView);
+    await wrapper.findAll(".auth-mode button")[1].trigger("click");
+    await wrapper.get('input[type="email"]').setValue("used@example.com");
+    await wrapper.get('input[type="password"]').setValue("long-password");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain("邮箱已注册");
+    expect(window.localStorage.getItem("cs-jobmate-access-token")).toBeNull();
   });
 });
 
