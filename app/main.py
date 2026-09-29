@@ -104,7 +104,7 @@ def create_app() -> FastAPI:
                 bucket.append(now)
                 _rate_limit_buckets[bucket_key] = bucket
 
-        is_public = request.url.path in public_paths or request.url.path.startswith("/api/auth") or request.method == "OPTIONS"
+        is_public = request.url.path in public_paths or request.url.path in {"/api/auth/login", "/api/auth/register"} or request.method == "OPTIONS"
         authenticated_user_id = None
         if settings.auth_enabled and request.url.path.startswith("/api") and not is_public:
             authorization = request.headers.get("Authorization", "")
