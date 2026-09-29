@@ -161,6 +161,14 @@ CACHE_PREFIX=jm:v1
 CACHE_FAIL_OPEN=true
 ```
 
+Redis 也可以作为分析任务队列。将本地 `.env` 中的 `TASK_QUEUE_ENABLED` 设为 `true`，并单独启动 worker：
+
+```bash
+uv run python -m app.task_worker
+```
+
+启用后，市场分析和副驾深度分析会进入 Redis 队列，由 worker 执行；未启用时继续使用 FastAPI 本地后台任务。
+
 当前缓存内容包括：
 
 - JD 要求抽取、证据裁决、报告表达等已通过 Pydantic 校验的结构化阶段结果；
@@ -185,7 +193,7 @@ pnpm lint
 ## 当前边界与后续方向
 
 - 岗位搜索当前以 Tavily 为入口，搜索结果可能是招聘聚合页或摘要；投递前仍需打开原链接确认岗位有效性。
-- 当前使用本地 SQLite 与 FastAPI `BackgroundTasks`，定位为单用户本机运行；不提供账号、租户隔离、可靠任务重试或公网部署能力。
+- 默认使用本地 SQLite 与 FastAPI `BackgroundTasks`，也可以通过 Redis worker 执行长任务；项目仍定位为单用户本机运行，不提供账号、租户隔离或公网部署能力。
 - `EMBEDDING_ENABLED=false` 时默认使用 TF-IDF；Hybrid 仅作为显式配置的实验策略，失败会受控回退。
 - 可通过 `python -m evals.export_reviewed_feedback --database jobmatch.db` 导出人工修正/拒绝的脱敏评测候选数据，不会覆盖现有 fixtures。
 - 启动后可运行 `powershell -ExecutionPolicy Bypass -File scripts/smoke.ps1` 检查健康状态和非敏感能力信息。
