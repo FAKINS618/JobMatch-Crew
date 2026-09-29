@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     task_queue_name: str = "jm:tasks"
     task_queue_group: str = "jm:workers"
     task_queue_visibility_timeout_seconds: int = 900
+    task_max_attempts: int = 3
 
     model_config = SettingsConfigDict(
         env_file=".env",
