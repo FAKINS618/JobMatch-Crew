@@ -10,6 +10,7 @@ from app.schemas import (
     ResumeSuggestionResponse,
     ResumeSuggestionUpdate,
     ResumeVersionFromSuggestionsCreate,
+    ResumeVersionDiffResponse,
 )
 from app.services.resume_parser_service import parse_resume_to_profile
 from app.database import (
@@ -21,6 +22,7 @@ from app.database import (
     update_resume_suggestion,
     create_resume_version_from_suggestions,
     update_resume_market_search_preference,
+    get_resume_version_diff,
 )
 
 router = APIRouter(prefix="/api/resumes", tags=["Resumes"])
@@ -54,6 +56,14 @@ def get_resume_versions() -> list[ResumeVersionResponse]:
         ResumeVersionResponse.model_validate(item)
         for item in list_resume_versions()
     ]
+
+
+@router.get("/versions/{from_version_id}/diff/{to_version_id}", response_model=ResumeVersionDiffResponse)
+def get_version_diff(from_version_id: int, to_version_id: int) -> ResumeVersionDiffResponse:
+    diff = get_resume_version_diff(from_version_id, to_version_id)
+    if diff is None:
+        raise HTTPException(status_code=404, detail="两个版本不存在或不属于同一份简历")
+    return ResumeVersionDiffResponse.model_validate(diff)
 
 
 @router.get(
