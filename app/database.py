@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import re
+from typing import Any
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -76,6 +77,13 @@ TURN_EXTRA_COLUMNS = {
     "input_type": "TEXT NOT NULL DEFAULT 'initial_jd'",
 }
 
+ANALYSIS_TASK_EXTRA_COLUMNS = {
+    "payload_json": "TEXT NOT NULL DEFAULT '{}'",
+    "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+    "max_attempts": "INTEGER NOT NULL DEFAULT 3",
+    "cancelled_at": "TIMESTAMP",
+}
+
 
 ACTION_ITEM_EXTRA_COLUMNS = {
     "source_type": "TEXT NOT NULL DEFAULT 'report'",
@@ -121,6 +129,9 @@ def init_db() -> None:
     job_posts 表保存某次市场匹配分析参考过的岗位样本。
     """
     with connect_db() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS reports (
@@ -542,6 +553,7 @@ def init_db() -> None:
 
 
         _ensure_report_columns(conn)
+        _ensure_analysis_task_columns(conn)
         _ensure_resume_version_columns(conn)
         _ensure_job_post_columns(conn)
         _ensure_session_columns(conn)
@@ -551,7 +563,25 @@ def init_db() -> None:
         # 历史报告可能是在 resume_suggestions 表加入前生成的。启动时补齐
         # 可从结构化报告安全提取的建议，确保工作台和简历页看到同一事实。
         _backfill_report_suggestions(conn)
+        _apply_schema_migrations(conn)
         conn.commit()
+
+
+def _ensure_analysis_task_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(analysis_tasks)").fetchall()}
+    for column_name, column_type in ANALYSIS_TASK_EXTRA_COLUMNS.items():
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE analysis_tasks ADD COLUMN {column_name} {column_type}")
+
+
+def _apply_schema_migrations(conn: sqlite3.Connection) -> None:
+    applied = {row[0] for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
+    if 1 not in applied:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_tasks_status_updated ON analysis_tasks(status, updated_at)")
+        conn.execute("INSERT INTO schema_migrations(version) VALUES (1)")
+    if 2 not in applied:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_tasks_attempts ON analysis_tasks(status, attempt_count, updated_at)")
+        conn.execute("INSERT INTO schema_migrations(version) VALUES (2)")
 
 
 def recover_stale_background_tasks(stale_after_seconds: int) -> dict[str, int]:
@@ -952,6 +982,7 @@ def create_evidence_feedback(
             "SELECT * FROM evidence_feedback WHERE id = ?", (cursor.lastrowid,)
         ).fetchone()
         conn.commit()
+        return _resume_version_row_to_dict(row)
         return _evidence_feedback_row_to_dict(row)
 
 
@@ -1242,15 +1273,15 @@ def confirm_job_post(post_id: int) -> dict | None:
             row = conn.execute("SELECT * FROM job_posts WHERE id = ?", (post_id,)).fetchone()
         return dict(row)
 
-def create_analysis_task(task_type: str) -> int:
+def create_analysis_task(task_type: str, payload: dict[str, Any] | None = None) -> int:
     """创建异步分析任务，返回 task_id。"""
     with connect_db() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO analysis_tasks (task_type, status, progress)
-            VALUES (?, ?, ?)
+            INSERT INTO analysis_tasks (task_type, status, progress, payload_json, max_attempts)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (task_type, "pending", 0),
+            (task_type, "pending", 0, json.dumps(payload or {}, ensure_ascii=False), settings.task_max_attempts),
         )
         conn.commit()
         return int(cursor.lastrowid)
@@ -1274,7 +1305,7 @@ def update_analysis_task(
                 report_id = COALESCE(?, report_id),
                 error_message = COALESCE(?, error_message),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            WHERE id = ? AND status != 'cancelled'
             """,
             (status, progress, report_id, error_message, task_id),
         )
@@ -1288,7 +1319,8 @@ def get_analysis_task(task_id: int) -> dict | None:
         row = conn.execute(
             """
             SELECT id, task_type, status, progress, report_id,
-                   error_message, created_at, updated_at
+                   error_message, created_at, updated_at, attempt_count,
+                   max_attempts, cancelled_at
             FROM analysis_tasks
             WHERE id = ?
             """,
@@ -1296,6 +1328,18 @@ def get_analysis_task(task_id: int) -> dict | None:
         ).fetchone()
 
         return _with_display_times(dict(row)) if row else None
+
+
+def get_analysis_task_payload(task_id: int) -> dict | None:
+    with connect_db() as conn:
+        row = conn.execute("SELECT payload_json FROM analysis_tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row[0] or "{}")
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
 def create_resume_version(payload: ResumeVersionCreate) -> dict:
     """保存一份用户确认后的简历版本。"""
@@ -1356,6 +1400,45 @@ def create_resume_version(payload: ResumeVersionCreate) -> dict:
 
         return _resume_version_row_to_dict(row)
 
+
+def is_analysis_task_cancelled(task_id: int) -> bool:
+    with connect_db() as conn:
+        row = conn.execute("SELECT status FROM analysis_tasks WHERE id = ?", (task_id,)).fetchone()
+        return row is None or row[0] == "cancelled"
+
+
+def retry_analysis_task(task_id: int) -> dict | None:
+    with connect_db() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM analysis_tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        if row["status"] not in {"failed", "cancelled"}:
+            raise ValueError("只有失败或已取消的任务可以重试")
+        if row["attempt_count"] >= row["max_attempts"]:
+            raise ValueError("任务已达到最大重试次数")
+        conn.execute("UPDATE analysis_tasks SET status='pending', progress=0, error_message='', cancelled_at=NULL, attempt_count=attempt_count+1, updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
+        updated = conn.execute("SELECT * FROM analysis_tasks WHERE id = ?", (task_id,)).fetchone()
+        conn.commit()
+        result = _with_display_times(dict(updated))
+        result.pop("payload_json", None)
+        return result
+
+
+def cancel_analysis_task(task_id: int) -> dict | None:
+    with connect_db() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM analysis_tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        if row["status"] in {"success", "failed", "cancelled"}:
+            raise ValueError("当前任务状态不可取消")
+        conn.execute("UPDATE analysis_tasks SET status='cancelled', progress=100, cancelled_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
+        updated = conn.execute("SELECT * FROM analysis_tasks WHERE id = ?", (task_id,)).fetchone()
+        conn.commit()
+        result = _with_display_times(dict(updated))
+        result.pop("payload_json", None)
+        return result
 
 def list_resume_versions() -> list[dict]:
     """查询全部简历版本，供前端选择。"""
