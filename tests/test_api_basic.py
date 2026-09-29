@@ -11,6 +11,7 @@ from app.config import settings
 from app.services import copilot_context_service
 from app import task_worker
 from app.task_queue import dispatch_task
+from app.legacy_migration import LegacyMigrationError, migrate_legacy_data
 
 
 # 测基础 API：不调用大模型、不联网，只验证 FastAPI 应用能正常加载。
@@ -272,3 +273,88 @@ def test_worker_failure_update_uses_task_owner(monkeypatch):
     assert updates == [(9, 3, {"status": "failed", "progress": 100, "error_message": "任务消息处理失败，请重试。"})]
     assert queue.acknowledged == ["message-1"]
     assert get_current_user_id() is None
+
+
+def _legacy_database_with_accounts(path: Path) -> None:
+    database.init_db(path)
+    with database._open_db(path) as conn:
+        owner_id = conn.execute(
+            "SELECT id FROM users WHERE email = 'local-owner@localhost'"
+        ).fetchone()[0]
+        conn.execute("INSERT INTO users(email, password_hash) VALUES ('first@example.com', 'hash')")
+        conn.execute("INSERT INTO users(email, password_hash) VALUES ('second@example.com', 'hash')")
+        conn.execute(
+            "INSERT INTO reports(id, target_role, resume_text, jd_text, markdown_report, user_id) "
+            "VALUES (41, 'Backend', 'private resume', 'private JD', 'private report', ?)",
+            (owner_id,),
+        )
+        conn.execute(
+            "INSERT INTO job_posts(id, report_id, title, user_id) VALUES (51, 41, 'Developer', ?)",
+            (owner_id,),
+        )
+        conn.execute("INSERT INTO resumes(id, display_name, user_id) VALUES (61, 'My resume', ?)", (owner_id,))
+        conn.execute(
+            "INSERT INTO resume_versions(id, resume_id, version_name, raw_text, profile_json, user_id) "
+            "VALUES (71, 61, 'Original', 'private resume', '{}', ?)",
+            (owner_id,),
+        )
+        conn.execute(
+            "INSERT INTO copilot_sessions(id, resume_version_id, target_role, user_id) "
+            "VALUES (81, 71, 'Backend', ?)",
+            (owner_id,),
+        )
+        conn.execute("INSERT INTO analysis_turns(id, session_id) VALUES (91, 81)")
+        conn.execute("INSERT INTO copilot_messages(session_id, turn_id, role, content) VALUES (81, 91, 'user', 'private question')")
+
+
+def test_legacy_migration_previews_and_preserves_relationships(monkeypatch):
+    source = Path("tmp") / f"legacy-{uuid4().hex}.db"
+    _legacy_database_with_accounts(source)
+    preview = migrate_legacy_data(source, "first@example.com")
+    target = Path(preview["target"])
+    assert preview["status"] == "empty"
+    assert preview["row_counts"]["reports"] == 1
+    assert not target.exists()
+
+    imported = migrate_legacy_data(source, "first@example.com", apply=True)
+    assert imported["status"] == "imported"
+    with database._open_db(target) as conn:
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert tuple(conn.execute("SELECT id, user_id FROM reports").fetchone()) == (41, imported["user_id"])
+        assert conn.execute("SELECT report_id FROM job_posts").fetchone()[0] == 41
+        assert conn.execute("SELECT content FROM copilot_messages").fetchone()[0] == "private question"
+        assert conn.execute("SELECT email FROM users WHERE email = 'first@example.com'").fetchone() is None
+    with database._open_db(source) as conn:
+        assert conn.execute("SELECT markdown_report FROM reports WHERE id = 41").fetchone()[0] == "private report"
+        other_user_id = conn.execute("SELECT id FROM users WHERE email = 'second@example.com'").fetchone()[0]
+    monkeypatch.setattr(database, "DB_PATH", source.resolve())
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    token = current_user_id.set(imported["user_id"])
+    try:
+        assert database.get_report(41)["markdown_report"] == "private report"
+    finally:
+        current_user_id.reset(token)
+    token = current_user_id.set(other_user_id)
+    try:
+        assert database.get_report(41) is None
+    finally:
+        current_user_id.reset(token)
+    assert migrate_legacy_data(source, "first@example.com", apply=True)["status"] == "already_imported"
+    with pytest.raises(LegacyMigrationError, match="其他账号"):
+        migrate_legacy_data(source, "second@example.com", apply=True)
+
+
+def test_legacy_migration_refuses_occupied_account_database():
+    source = Path("tmp") / f"legacy-occupied-{uuid4().hex}.db"
+    _legacy_database_with_accounts(source)
+    preview = migrate_legacy_data(source, "first@example.com")
+    target = Path(preview["target"])
+    database.init_db(target)
+    with database._open_db(target) as conn:
+        conn.execute("INSERT INTO reports(target_role, resume_text, jd_text, markdown_report) VALUES ('Other', 'r', 'j', 'existing')")
+    with pytest.raises(LegacyMigrationError, match="已有业务数据"):
+        migrate_legacy_data(source, "first@example.com", apply=True)
+    with database._open_db(source) as conn:
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'legacy_import_claims'"
+        ).fetchone() is None
