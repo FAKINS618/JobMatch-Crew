@@ -7,11 +7,31 @@ import hashlib
 import hmac
 import secrets
 import time
+from contextvars import ContextVar
+
+from fastapi import HTTPException, Request
 
 from app.config import settings
-from app.database import connect_db
+from app.database import connect_auth_db
 
 _HASH_ITERATIONS = 240_000
+current_user_id: ContextVar[int | None] = ContextVar("current_user_id", default=None)
+
+
+def get_current_user_id() -> int | None:
+    return current_user_id.get()
+
+
+def get_current_user(request: Request) -> dict:
+    """Explicit user dependency for routes that need an account identity."""
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="需要登录后访问")
+    with connect_auth_db() as conn:
+        row = conn.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=401, detail="登录状态已失效")
+    return dict(row)
 
 
 def normalize_email(email: str) -> str:
@@ -39,7 +59,7 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def create_user(email: str, password: str) -> dict:
     normalized = normalize_email(email)
-    with connect_db() as conn:
+    with connect_auth_db() as conn:
         try:
             cursor = conn.execute(
                 "INSERT INTO users(email, password_hash) VALUES (?, ?)",
@@ -55,7 +75,7 @@ def create_user(email: str, password: str) -> dict:
 
 
 def authenticate_user(email: str, password: str) -> dict | None:
-    with connect_db() as conn:
+    with connect_auth_db() as conn:
         row = conn.execute("SELECT id, email, password_hash, created_at FROM users WHERE email = ?", (normalize_email(email),)).fetchone()
     if row is None or not verify_password(password, row["password_hash"]):
         return None
@@ -84,6 +104,6 @@ def verify_token(token: str) -> dict | None:
         user_id = int(user_id_text)
     except ValueError:
         return None
-    with connect_db() as conn:
+    with connect_auth_db() as conn:
         row = conn.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
     return dict(row) if row else None
