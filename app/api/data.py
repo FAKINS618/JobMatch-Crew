@@ -24,7 +24,7 @@ def export_data() -> JSONResponse:
         tables = [
             row[0]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'users' ORDER BY name"
             ).fetchall()
         ]
         data: dict[str, list[dict[str, Any]]] = {}
