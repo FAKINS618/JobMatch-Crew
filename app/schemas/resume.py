@@ -52,6 +52,22 @@ class ResumeVersionResponse(BaseModel):
     raw_text: str
     profile: ResumeProfile
     created_at: str | None = None
+    parent_resume_version_id: int | None = None
+    source_report_id: int | None = None
+
+
+class ResumeSectionDiff(BaseModel):
+    section: str
+    before: Any
+    after: Any
+    changed: bool = True
+
+
+class ResumeVersionDiffResponse(BaseModel):
+    from_version_id: int
+    to_version_id: int
+    sections: list[ResumeSectionDiff] = Field(default_factory=list)
+    raw_text_changed: bool = False
 
 
 class ResumeHistoryMessage(BaseModel):
