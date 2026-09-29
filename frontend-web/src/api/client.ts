@@ -38,6 +38,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   });
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
+    if (response.status === 401 && token && path !== "/api/auth/login" && path !== "/api/auth/register") {
+      window.localStorage.removeItem("cs-jobmate-access-token");
+      window.dispatchEvent(new Event("jobmatch-auth-expired"));
+    }
     throw new ApiError(readErrorDetail(payload), response.status);
   }
   return (await response.json()) as T;
