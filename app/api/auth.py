@@ -1,9 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth import authenticate_user, create_user, issue_token
+from app.auth import authenticate_user, create_user, get_current_user, issue_token
 from app.schemas import AuthCredentials, AuthResponse, UserResponse
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+
+@router.get("/me", response_model=UserResponse)
+def current_user(user: dict = Depends(get_current_user)) -> UserResponse:
+    return UserResponse.model_validate(user)
 
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
