@@ -20,4 +20,6 @@ def capabilities() -> dict[str, object]:
         "embedding_enabled": bool(settings.embedding_enabled),
         "retrieval_default_strategy": getattr(retriever, "last_strategy", "tfidf"),
         "evidence_feedback_enabled": True,
+        "auth_enabled": bool(settings.auth_enabled),
+        "rate_limit_enabled": bool(settings.rate_limit_enabled),
     }
