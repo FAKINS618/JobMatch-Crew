@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from redis import Redis
 
+from app.auth import get_current_user_id
 from app.config import settings
 
 
@@ -81,7 +82,13 @@ def _safe_error(error: Exception) -> str:
 
 def build_cache_key(namespace: str, identity: Mapping[str, Any] | None = None) -> str:
     """Build a versioned key without placing user text in Redis keys."""
-    payload = json.dumps(identity or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    user_id = get_current_user_id() if settings.auth_enabled else None
+    if settings.auth_enabled and user_id is None:
+        raise RuntimeError("Authenticated user context is required for cached data")
+    payload = json.dumps(
+        {"identity": identity or {}, "user_id": user_id},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
     normalized_namespace = namespace.strip(":")
     return f"{settings.cache_prefix.strip(':')}:{normalized_namespace}:{digest}"
