@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     task_queue_group: str = "jm:workers"
     task_queue_visibility_timeout_seconds: int = 900
     task_max_attempts: int = 3
+    auth_enabled: bool = False
+    auth_secret: str = "change-me-in-production"
+    auth_token_ttl_seconds: int = 86400
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = 120
+    rate_limit_window_seconds: int = 60
 
     model_config = SettingsConfigDict(
         env_file=".env",
