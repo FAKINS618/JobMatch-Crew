@@ -14,6 +14,7 @@ from app.services.analysis_task_service import (
 )
 from app.services.copilot_service import run_copilot_turn
 from app.task_queue import RedisTaskQueue, new_consumer_name
+from app.database import update_analysis_task
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,15 @@ def main() -> None:
                     payload.get("task_type"),
                     message_id,
                 )
+                task_id = payload.get("payload", {}).get("task_id") if isinstance(payload.get("payload"), dict) else None
+                if task_id is not None:
+                    update_analysis_task(
+                        int(task_id),
+                        status="failed",
+                        progress=100,
+                        error_message="任务消息处理失败，请重试。",
+                    )
+                queue.acknowledge(message_id)
                 continue
             queue.acknowledge(message_id)
 
