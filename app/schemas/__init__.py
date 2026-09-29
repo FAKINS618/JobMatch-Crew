@@ -72,6 +72,7 @@ from app.schemas.copilot import (
     CopilotSessionDetailResponse,
     CopilotSessionResponse,
 )
+from app.schemas.auth import AuthCredentials, AuthResponse, UserResponse
 __all__ = [
     "ActionPlanItem",
     "InterviewQuestion",
@@ -137,5 +138,8 @@ __all__ = [
     "CopilotSessionCreate",
     "CopilotSessionDetailResponse",
     "CopilotSessionResponse",
+    "AuthCredentials",
+    "AuthResponse",
+    "UserResponse",
 
 ]
