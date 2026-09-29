@@ -18,6 +18,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.job_targets import router as job_targets_router
 from app.api.copilot import router as copilot_router
 from app.api.system import router as system_router
+from app.api.data import router as data_router
 from app.config import settings
 
 logging.basicConfig(
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(job_targets_router)
     app.include_router(copilot_router)
     app.include_router(system_router)
+    app.include_router(data_router)
     return app
 
 
