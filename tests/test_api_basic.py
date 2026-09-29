@@ -81,3 +81,21 @@ def test_analysis_task_retry_persists_payload_and_limits_attempts(monkeypatch):
     database.update_analysis_task(task_id, status="failed", progress=100)
     with pytest.raises(ValueError, match="最大重试"):
         database.retry_analysis_task(task_id)
+
+
+def test_auth_register_login_and_protected_api(monkeypatch):
+    db_path = Path("tmp") / f"auth-{uuid4().hex}.db"
+    monkeypatch.setattr(database.settings, "database_path", db_path)
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    monkeypatch.setattr(database.settings, "auth_enabled", True)
+    with TestClient(app) as lifespan_client:
+        denied = lifespan_client.get("/api/reports")
+        assert denied.status_code == 401
+        registered = lifespan_client.post(
+            "/api/auth/register",
+            json={"email": f"user-{uuid4().hex}@example.com", "password": "long-password-123"},
+        )
+        assert registered.status_code == 201
+        token = registered.json()["access_token"]
+        allowed = lifespan_client.get("/api/reports", headers={"Authorization": f"Bearer {token}"})
+        assert allowed.status_code == 200
