@@ -227,16 +227,20 @@ export function createJobTarget(payload: { report_id: number; url: string; prior
 
 export interface MarketTaskCreateResponse {
   task_id: number;
-  status: "pending" | "running" | "success" | "failed";
+  status: "pending" | "running" | "success" | "failed" | "cancelled";
+  attempt_count?: number;
 }
 
 export interface MarketTask {
   id: number;
   task_type: string;
-  status: "pending" | "running" | "success" | "failed";
+  status: "pending" | "running" | "success" | "failed" | "cancelled";
   progress: number;
   report_id: number | null;
   error_message: string;
+  attempt_count?: number;
+  max_attempts?: number;
+  cancelled_at?: string | null;
 }
 
 export function createMarketMatchTask(payload: {
@@ -254,6 +258,14 @@ export function createMarketMatchTask(payload: {
 
 export function getMarketTask(taskId: number) {
   return apiFetch<MarketTask>(`/api/tasks/${taskId}`);
+}
+
+export function retryMarketTask(taskId: number) {
+  return apiFetch<MarketTaskCreateResponse>(`/api/tasks/${taskId}/retry`, { method: "POST" });
+}
+
+export function cancelMarketTask(taskId: number) {
+  return apiFetch<MarketTask>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
 }
 
 export function createActionItemsFromReport(reportId: number, skills: string[]) {
