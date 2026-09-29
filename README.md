@@ -49,39 +49,39 @@
 
 侧栏集中展示工作区入口、当前目标方向、目标城市和后端连接状态；求职意向在主工作区配置，不隐藏在侧栏表单中。
 
-![工作区侧栏](docs/images/sidebar-workspace.png)
+![工作区侧栏]()
 
 ### 2. 统一输入工作台
 
 用户选择分析模式后输入简历和目标 JD，也可以上传 `txt` 或 `md` 格式简历；提交按钮与上传入口放在同一操作区。
 
-![简历与 JD 输入](docs/images/jd-analysis-input.png)
+![简历与 JD 输入]()
 
 ### 3. 结构化匹配总览
 
 报告优先展示匹配评分、已匹配技能数量、待补强技能数量和面试题数量，再按标签页查看细节，减少用户阅读长 Markdown 的成本。
 
-![结构化匹配总览](docs/images/skill-gap-suggestions.png)
+![结构化匹配总览]()
 
 ### 4. 评分依据与可解释建议
 
 每个评分维度展示分数、评分证据和下一步建议。评分结果需要有简历或 JD 文本中的证据支撑，而不是只返回黑盒结论。
 
-![评分依据](docs/images/score-evidence.png)
+![评分依据]()
 
 ### 5. 简历优化结果
 
 系统将模型输出整理成可审阅的简历 Bullet 建议，帮助用户针对岗位补充技术事实和项目产出。
 
-![简历优化建议](docs/images/resume-bullets.png)
+![简历优化建议]()
 
 ### 6. 面试准备与行动计划
 
 根据技能缺口生成面试问题，并输出带有预期产出的阶段性补强计划。
 
-![面试准备](docs/images/interview-preparation.png)
+![面试准备]()
 
-![行动计划](docs/images/action-plan.png)
+![行动计划]()
 
 > 截图中的简历 Bullet、面试题和学习计划均为模型生成建议，用户必须基于真实项目经历复核后再用于简历或面试。系统不会把模型建议当作已验证事实。
 
@@ -148,6 +148,12 @@ Streamlit 兼容工作台：http://localhost:8501
 接口文档：http://127.0.0.1:8000/docs
 ```
 
+### 账号数据隔离
+
+在 `.env` 中设置 `AUTH_ENABLED=true`，并将 `AUTH_SECRET` 设置为独有的至少 32 字符随机值；使用默认或过短的密钥时后端会拒绝启动。启用后，Vue 前端通过注册或登录获取访问令牌，业务数据分别写入与 `DATABASE_PATH` 同目录的 `jobmatch.user-<用户 ID>.db`，账号信息留在主数据库。Redis 缓存和后台任务同样按账号隔离。
+
+已有单用户数据仍保留在原 `DATABASE_PATH`，不会自动分配给新注册账号，也不会被导出到新账号的备份中。切换前请保留原数据库备份；历史数据归属需要单独确认后迁移。Streamlit 兼容工作台目前没有登录流程，开启认证后请使用 Vue 前端。
+
 ## 可选 Redis 缓存
 
 项目使用 Redis 作为可选加速层，SQLite 仍然保存简历版本、报告、证据链、人工反馈和会话历史。Redis 未启动或连接失败时，系统会自动回退到现有 SQLite + LLM 流程，不影响核心功能。
@@ -193,9 +199,9 @@ pnpm lint
 ## 当前边界与后续方向
 
 - 岗位搜索当前以 Tavily 为入口，搜索结果可能是招聘聚合页或摘要；投递前仍需打开原链接确认岗位有效性。
-- 默认使用本地 SQLite 与 FastAPI `BackgroundTasks`，也可以通过 Redis worker 执行长任务；项目仍定位为单用户本机运行，不提供账号、租户隔离或公网部署能力。
+- 默认使用本地 SQLite 与 FastAPI `BackgroundTasks`，也可以通过 Redis worker 执行长任务；开启认证后账号数据按数据库文件隔离，公网部署仍需独立评估。
 - `EMBEDDING_ENABLED=false` 时默认使用 TF-IDF；Hybrid 仅作为显式配置的实验策略，失败会受控回退。
 - 可通过 `python -m evals.export_reviewed_feedback --database jobmatch.db` 导出人工修正/拒绝的脱敏评测候选数据，不会覆盖现有 fixtures。
 - 启动后可运行 `powershell -ExecutionPolicy Bypass -File scripts/smoke.ps1` 检查健康状态和非敏感能力信息。
 - Vue 已覆盖副驾、简历版本、岗位收件箱、成长计划和投递管道；Streamlit 保留为兼容和调试入口。
-- 下一阶段优先完成：岗位详情的面试复盘、简历区块差异确认、投递事件时间线，以及账号和隐私隔离。
+- 下一阶段优先完成：历史数据归属迁移、岗位详情的面试复盘、简历区块差异确认，以及投递事件时间线。
