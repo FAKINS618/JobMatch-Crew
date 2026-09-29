@@ -27,9 +27,14 @@ function readErrorDetail(payload: unknown): string {
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = window.localStorage.getItem("cs-jobmate-access-token");
   const response = await fetch(resolveApiUrl(path), {
     ...init,
-    headers: { "Content-Type": "application/json", ...init.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init.headers,
+    },
   });
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
