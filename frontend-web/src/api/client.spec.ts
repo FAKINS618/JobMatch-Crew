@@ -4,7 +4,7 @@ import App from "../App.vue";
 import AuthView from "../views/AuthView.vue";
 import { apiFetch, resolveApiUrl } from "./client";
 import { submitEvidenceFeedback } from "./copilot";
-import { getCurrentUser } from "./auth";
+import { getCurrentUser, revokeSession } from "./auth";
 import { confirmJobPost, createInterviewReview, getJobTargetTimeline, updateResumeSuggestion } from "./workspace";
 
 afterEach(() => {
@@ -50,6 +50,16 @@ describe("apiFetch", () => {
     await expect(getCurrentUser()).rejects.toMatchObject({ status: 401 });
     expect(window.localStorage.getItem("cs-jobmate-access-token")).toBeNull();
     expect(expired).toHaveBeenCalledOnce();
+  });
+
+  it("revokes the current server session before clearing the local token", async () => {
+    window.localStorage.setItem("cs-jobmate-access-token", "active-token");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(revokeSession()).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", expect.objectContaining({ method: "POST" }));
+    expect(window.localStorage.getItem("cs-jobmate-access-token")).toBeNull();
   });
 
   it("submits a structured evidence review", async () => {
@@ -112,6 +122,21 @@ describe("account screens", () => {
     const wrapper = mount(App, { global: { stubs: { RouterLink: true, RouterView: true } } });
     await flushPromises();
     expect(wrapper.find(".side-nav").exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("clears the local token when server-side logout fails", async () => {
+    window.localStorage.setItem("cs-jobmate-access-token", "active-token");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ auth_enabled: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 2, email: "user@example.com", created_at: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "服务暂不可用" }), { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(App, { global: { stubs: { RouterLink: true, RouterView: true } } });
+    await flushPromises();
+    await wrapper.get(".account-logout").trigger("click");
+    await flushPromises();
+    expect(window.localStorage.getItem("cs-jobmate-access-token")).toBeNull();
     wrapper.unmount();
   });
 
