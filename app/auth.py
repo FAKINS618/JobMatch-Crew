@@ -84,17 +84,39 @@ def authenticate_user(email: str, password: str) -> dict | None:
 
 def issue_token(user: dict) -> str:
     expires = int(time.time()) + max(300, settings.auth_token_ttl_seconds)
-    payload = f"{int(user['id'])}.{expires}"
+    token_id = secrets.token_hex(16)
+    payload = f"{int(user['id'])}.{expires}.{token_id}"
     signature = hmac.new(settings.auth_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}.{signature}"
+    token = f"{payload}.{signature}"
+    with connect_auth_db() as conn:
+        conn.execute(
+            "INSERT INTO auth_sessions(token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+            (_token_hash(token), int(user["id"]), expires),
+        )
+        conn.commit()
+    return token
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def revoke_token(token: str) -> bool:
+    with connect_auth_db() as conn:
+        cursor = conn.execute(
+            "UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = ? AND revoked_at IS NULL",
+            (_token_hash(token),),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
 
 
 def verify_token(token: str) -> dict | None:
     parts = token.split(".")
-    if len(parts) != 3:
+    if len(parts) != 4:
         return None
-    user_id_text, expires_text, signature = parts
-    payload = f"{user_id_text}.{expires_text}"
+    user_id_text, expires_text, token_id, signature = parts
+    payload = f"{user_id_text}.{expires_text}.{token_id}"
     expected = hmac.new(settings.auth_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected):
         return None
@@ -105,5 +127,12 @@ def verify_token(token: str) -> dict | None:
     except ValueError:
         return None
     with connect_auth_db() as conn:
-        row = conn.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute(
+            """
+            SELECT u.id, u.email, u.created_at
+            FROM users u JOIN auth_sessions s ON s.user_id = u.id
+            WHERE u.id = ? AND s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at >= ?
+            """,
+            (user_id, _token_hash(token), int(time.time())),
+        ).fetchone()
     return dict(row) if row else None
