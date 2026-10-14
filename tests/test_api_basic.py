@@ -90,6 +90,17 @@ def test_analysis_task_retry_persists_payload_and_limits_attempts(monkeypatch):
         database.retry_analysis_task(task_id)
 
 
+def test_analysis_task_claim_is_atomic_and_terminal_state_cannot_regress(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "task-claim.db")
+    database.init_db()
+    task_id = database.create_analysis_task("market_match", {"request": {"target_role": "Python"}})
+    assert database.claim_analysis_task(task_id) is True
+    assert database.claim_analysis_task(task_id) is False
+    database.update_analysis_task(task_id, status="success", progress=100)
+    database.update_analysis_task(task_id, status="running", progress=10)
+    assert database.get_analysis_task(task_id)["status"] == "success"
+
+
 def test_auth_register_login_and_protected_api(monkeypatch):
     db_path = Path("tmp") / f"auth-{uuid4().hex}.db"
     monkeypatch.setattr(database.settings, "database_path", db_path)
@@ -111,6 +122,56 @@ def test_auth_register_login_and_protected_api(monkeypatch):
         assert me.status_code == 200
         assert me.json()["email"] == registered.json()["user"]["email"]
         assert lifespan_client.get("/api/auth/me").status_code == 401
+
+
+def test_logout_revokes_server_session(monkeypatch):
+    db_path = Path("tmp") / f"logout-{uuid4().hex}.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(settings, "auth_secret", "test-auth-secret-with-at-least-32-characters")
+    with TestClient(app) as lifespan_client:
+        registered = lifespan_client.post(
+            "/api/auth/register",
+            json={"email": f"logout-{uuid4().hex}@example.com", "password": "long-password-123"},
+        )
+        token = registered.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        assert lifespan_client.get("/api/auth/me", headers=headers).status_code == 200
+        assert lifespan_client.post("/api/auth/logout", headers=headers).status_code == 204
+        assert lifespan_client.get("/api/auth/me", headers=headers).status_code == 401
+
+
+def test_data_backup_preview_and_restore_are_atomic(monkeypatch):
+    source = Path("tmp") / f"backup-source-{uuid4().hex}.db"
+    target = Path("tmp") / f"backup-target-{uuid4().hex}.db"
+    monkeypatch.setattr(database, "DB_PATH", source)
+    monkeypatch.setattr(settings, "auth_enabled", False)
+    with TestClient(app) as source_client:
+        database.save_report("Backend", 80, "resume", "jd", "report")
+        backup = source_client.get("/api/data/export")
+        assert backup.status_code == 200
+        payload = backup.json()
+    monkeypatch.setattr(database, "DB_PATH", target)
+    with TestClient(app) as target_client:
+        preview = target_client.post("/api/data/restore/preview", json=payload)
+        assert preview.status_code == 200
+        assert preview.json()["status"] == "empty"
+        restored = target_client.post("/api/data/restore", json=payload)
+        assert restored.status_code == 200
+        assert restored.json()["status"] == "restored"
+        assert target_client.get("/api/reports").json()["reports"]
+        occupied = target_client.post("/api/data/restore", json=payload)
+        assert occupied.status_code == 409
+
+
+def test_data_restore_rejects_invalid_backup_without_writing(monkeypatch):
+    target = Path("tmp") / f"backup-invalid-{uuid4().hex}.db"
+    monkeypatch.setattr(database, "DB_PATH", target)
+    monkeypatch.setattr(settings, "auth_enabled", False)
+    with TestClient(app) as client:
+        invalid = client.post("/api/data/restore", json={"format": "wrong", "version": 1, "tables": {}})
+        assert invalid.status_code == 422
+        assert client.get("/api/reports").json()["reports"] == []
 
 
 def test_auth_rejects_default_signing_secret(monkeypatch):
