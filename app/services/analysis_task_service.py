@@ -1,6 +1,6 @@
 import logging
 
-from app.database import is_analysis_task_cancelled, update_analysis_task, update_resume_market_search_trigger
+from app.database import claim_analysis_task, is_analysis_task_cancelled, update_analysis_task, update_resume_market_search_trigger
 from app.schemas import MarketMatchRequest
 from app.services.market_match_service import generate_market_match_report
 
@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 def run_market_match_task(task_id: int, payload: MarketMatchRequest) -> None:
     """Run a market analysis and never overwrite a user cancellation."""
-    update_analysis_task(task_id, status="running", progress=10)
+    if not claim_analysis_task(task_id):
+        return
     if is_analysis_task_cancelled(task_id):
         return
     try:
@@ -28,8 +29,11 @@ def run_auto_market_match_task(
     task_id: int, payload: MarketMatchRequest, trigger_id: int
 ) -> None:
     """Run an automatic market analysis while preserving trigger state."""
+    if not claim_analysis_task(task_id):
+        if is_analysis_task_cancelled(task_id):
+            update_resume_market_search_trigger(trigger_id, status="skipped", reason="任务已取消")
+        return
     update_resume_market_search_trigger(trigger_id, status="running")
-    update_analysis_task(task_id, status="running", progress=10)
     if is_analysis_task_cancelled(task_id):
         update_resume_market_search_trigger(trigger_id, status="skipped", reason="任务已取消")
         return
