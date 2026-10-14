@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.auth import authenticate_user, create_user, get_current_user, issue_token
+from app.auth import authenticate_user, create_user, get_current_user, issue_token, revoke_token
 from app.schemas import AuthCredentials, AuthResponse, UserResponse
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -9,6 +9,13 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 @router.get("/me", response_model=UserResponse)
 def current_user(user: dict = Depends(get_current_user)) -> UserResponse:
     return UserResponse.model_validate(user)
+
+
+@router.post("/logout", status_code=204)
+def logout(request: Request, user: dict = Depends(get_current_user)) -> None:
+    token = getattr(request.state, "access_token", None)
+    if not token or not revoke_token(token):
+        raise HTTPException(status_code=401, detail="登录状态已失效")
 
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
