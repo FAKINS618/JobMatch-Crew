@@ -112,6 +112,7 @@ def create_app() -> FastAPI:
             if user is None:
                 return JSONResponse(status_code=401, content={"detail": "需要登录后访问"})
             authenticated_user_id = int(user["id"])
+            request.state.access_token = authorization[7:].strip()
         request.state.user_id = authenticated_user_id
 
         token = current_user_id.set(authenticated_user_id)
