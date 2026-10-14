@@ -31,3 +31,8 @@ export async function register(email: string, password: string) {
 export function logout() {
   window.localStorage.removeItem(ACCESS_TOKEN_KEY);
 }
+
+export async function revokeSession(): Promise<void> {
+  await apiFetch<void>("/api/auth/logout", { method: "POST" });
+  logout();
+}
