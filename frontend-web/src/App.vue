@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref } from "vue";
 import { RouterLink, RouterView } from "vue-router";
 import AuthView from "./views/AuthView.vue";
 import { ApiError, apiFetch } from "./api/client";
-import { getAccessToken, getCurrentUser, logout, type AuthUser } from "./api/auth";
+import { getAccessToken, getCurrentUser, logout, revokeSession, type AuthUser } from "./api/auth";
 
 type AppStatus = "loading" | "ready" | "auth" | "unavailable";
 const status = ref<AppStatus>("loading");
@@ -47,8 +47,12 @@ function reloadSession() {
   window.location.assign("/");
 }
 
-function signOut() {
-  logout();
+async function signOut() {
+  try {
+    await revokeSession();
+  } catch {
+    logout();
+  }
   reloadSession();
 }
 
