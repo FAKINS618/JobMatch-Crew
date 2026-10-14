@@ -177,6 +177,19 @@ def init_db(path=None) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                revoked_at TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, revoked_at)")
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 target_role TEXT NOT NULL,
@@ -1366,11 +1379,29 @@ def update_analysis_task(
                 report_id = COALESCE(?, report_id),
                 error_message = COALESCE(?, error_message),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND status != 'cancelled'
+            WHERE id = ?
+              AND status != 'cancelled'
+              AND NOT (status IN ('success', 'failed') AND COALESCE(?, status) != status)
             """,
-            (status, progress, report_id, error_message, task_id),
+            (status, progress, report_id, error_message, task_id, status),
         )
         conn.commit()
+
+
+def claim_analysis_task(task_id: int) -> bool:
+    """Atomically claim a pending task so duplicate dispatches run only once."""
+    with connect_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE analysis_tasks
+            SET status = 'running', progress = CASE WHEN progress < 10 THEN 10 ELSE progress END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'pending'
+            """,
+            (task_id,),
+        )
+        conn.commit()
+        return cursor.rowcount == 1
 
 
 def get_analysis_task(task_id: int) -> dict | None:
